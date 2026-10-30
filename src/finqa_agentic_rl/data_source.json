@@ -1,0 +1,10 @@
+{
+  "repo_id": "rLLM/finqa",
+  "canonical_repo_id": "rLLM/rLLM-FinQA-Dataset",
+  "revision": "33f2eb380e6cba84b8df2dd831d33c4ded8f6093",
+  "filename": "data.tar.gz",
+  "sha256": "24d9c89688160742dffd629c1c79f57f6f8870e5536c8c3172158588b05f086a",
+  "size_bytes": 7530234,
+  "license": "apache-2.0",
+  "splits": {"train": 4030, "val": 522, "test": 558}
+}

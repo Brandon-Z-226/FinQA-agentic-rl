@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finqa-agentic-rl"
+version = "0.1.0"
+description = "Reproduction of the pinned rLLM FinQA Cookbook"
+readme = "README.md"
+license-files = ["licenses/rllm-LICENSE", "THIRD_PARTY_NOTICES.md"]
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "rllm==0.3.0.pre",
+    "rllm-model-gateway==0.1.0",
+    "openai",
+    "pandas",
+    "asteval>=1.0.6",
+    "huggingface-hub",
+    "hydra-core",
+]
+
+[project.scripts]
+finqa-prepare = "finqa_agentic_rl.prepare_finqa_data:main"
+finqa-train = "finqa_agentic_rl.train:main"
+
+[project.entry-points."rllm.agents"]
+finqa = "finqa_agentic_rl.finqa_flow:finqa_flow"
+
+[project.entry-points."rllm.evaluators"]
+finqa = "finqa_agentic_rl.finqa_eval:finqa_evaluator"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.11", "build>=1.2"]
+
+[tool.uv.sources]
+rllm = { git = "https://github.com/rllm-org/rllm.git", rev = "4e828c81680e5a85b638ceedeaf09d1e90109ca8" }
+rllm-model-gateway = { git = "https://github.com/rllm-org/rllm.git", rev = "4e828c81680e5a85b638ceedeaf09d1e90109ca8", subdirectory = "rllm-model-gateway" }
+
+[tool.uv]
+system-certs = true
+# Root rLLM overrides are not inherited by dependent projects.
+override-dependencies = ["litellm[proxy]==1.83.0", "numpy>=1.26.0", "rich>=14.1.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+finqa_agentic_rl = ["prompts/*.txt", "data_source.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["data: requires the downloaded official dataset (still offline)"]
+
+[tool.ruff]
+line-length = 200
+target-version = "py311"
+extend-exclude = ["upstream"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

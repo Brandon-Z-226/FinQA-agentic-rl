@@ -1,0 +1,8 @@
+include THIRD_PARTY_NOTICES.md
+include uv.lock .python-version
+recursive-include tests *.py
+recursive-include licenses *
+recursive-include docs *.md
+recursive-include upstream *.json *.md *.py *.toml *.sh *.txt
+recursive-include scripts *.sh
+recursive-include environments *.toml *.md

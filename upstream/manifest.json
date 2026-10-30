@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/rllm-org/rllm",
+  "commit": "4e828c81680e5a85b638ceedeaf09d1e90109ca8",
+  "files": {
+    "cookbooks/finqa/README.md": "c7c787acebc44c10bdc0d51a4736e3c1cc6a565704311b03ca20efdcf937df66",
+    "cookbooks/finqa/finqa_constants.py": "cb69f809efe62a2e7e8b140596b8afe07677ef2383142153fbfce10b7f33a04a",
+    "cookbooks/finqa/finqa_eval.py": "e3105866ddf9616f26968d4d5a20d496153dd70f6eb74a7479be288a6dbcf532",
+    "cookbooks/finqa/finqa_flow.py": "912e496b7562512226d73d9f78ca42637b1ebf7e1ab7076f3af9b5cc0038ff89",
+    "cookbooks/finqa/finqa_tools.py": "e5223518c16cca938aeb973577b0f1aa507c91deac0c309f99a9b78009727bc7",
+    "cookbooks/finqa/prepare_finqa_data.py": "d985ee71899721f829620ca4a85dd499c4287a076472188cbde27c34128d8e8c",
+    "cookbooks/finqa/prompts/correctness_prompt.txt": "6d91386429071ea6e19ca08e923cb91e62f02b65bc64aa81cb2fbc2ab9ee9194",
+    "cookbooks/finqa/prompts/multi_table_correctness_prompt.txt": "da47761f5bc350b14cc95bd4ba10059ef4f0e02844d701aba2a068ed59606e47",
+    "cookbooks/finqa/prompts/react_system_prompt.txt": "a7846033ce02d4d653edd0d80617046764fb8244128d961c9632cdd9e136558e",
+    "cookbooks/finqa/pyproject.toml": "5f2942b5ef171f3d7cb2677ada54934efb8b0fddffbf10ce4aa544549b66604e",
+    "cookbooks/finqa/test.py": "0b0c3576baaaac94c0f92b4ade81279b948bf04ebf9aad6bf4fb9ffe7d266fe7",
+    "cookbooks/finqa/train.py": "5fe32cb32d7dde6fdde9d72714d824b1661d0e478e2963768e8926edc0a09f16",
+    "cookbooks/finqa/train_fireworks.sh": "4e4fde4d404d25fbbc0705893b74d814e48ab04925274036c0c6052a55791b05",
+    "cookbooks/finqa/train_tinker.sh": "5794d9dfa8ae13abcbbaa04a7ff0dffc5ef356de0d31a7cea08d8bfc2446c5b8",
+    "cookbooks/finqa/train_verl.sh": "9df384dba7040d1c3f43c1578f7699a7d4eac460b928cb875761a27197b1b433"
+  }
+}
