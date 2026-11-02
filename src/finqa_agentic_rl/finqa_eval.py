@@ -8,9 +8,9 @@ scoring from the legacy :func:`projects.finqa.fin_qa_reward.fin_qa_reward_functi
 into a self-contained module so the cookbook does not depend on
 ``projects/finqa``.
 
-The judge calls require ``OPENAI_API_KEY``. If it's missing the evaluator
-falls back to ``reward=0`` rather than raising — useful for smoke tests
-without a real key.
+Judge connection and model overrides use ``FINQA_JUDGE_*`` variables.
+Without overrides, the original OpenAI Responses configuration is retained.
+Missing credentials or failed calls still produce ``reward=0``.
 """
 
 from __future__ import annotations
@@ -36,9 +36,16 @@ with open(CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
 with open(MULTI_TABLE_CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
     MULTI_TABLE_CORRECTNESS_PROMPT = f.read()
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-JUDGE_MODEL = "gpt-5-nano"
-MULTI_TABLE_JUDGE_MODEL = "gpt-5-mini"
+JUDGE_BASE_URL = os.environ.get("FINQA_JUDGE_BASE_URL") or None
+# Never send an unrelated OPENAI_API_KEY to a custom judge endpoint.
+# An explicitly empty FINQA_JUDGE_API_KEY also disables the legacy fallback.
+OPENAI_API_KEY = os.environ.get("FINQA_JUDGE_API_KEY", None if JUDGE_BASE_URL else os.environ.get("OPENAI_API_KEY"))
+JUDGE_MODEL = os.environ.get("FINQA_JUDGE_MODEL") or "gpt-5-nano"
+MULTI_TABLE_JUDGE_MODEL = os.environ.get("FINQA_JUDGE_MULTI_TABLE_MODEL") or os.environ.get("FINQA_JUDGE_MODEL") or "gpt-5-mini"
+JUDGE_API_STYLE = os.environ.get("FINQA_JUDGE_API_STYLE") or "responses"
+JUDGE_REASONING_EFFORT = os.environ.get("FINQA_JUDGE_REASONING_EFFORT") or None
+if JUDGE_API_STYLE not in {"responses", "chat_completions"}:
+    raise ValueError("FINQA_JUDGE_API_STYLE must be responses or chat_completions")
 
 CORRECTNESS_WEIGHTS = {
     "primary_data_score": 0.30,
@@ -55,16 +62,45 @@ _FINAL_ANSWER_TAIL_RE = re.compile(r"FINAL ANSWER:\s*(.*)$", re.DOTALL | re.IGNO
 
 
 def _make_judge_client():
-    """Build a plain OpenAI client. Returns None if OPENAI_API_KEY is missing."""
+    """Build the judge client without changing the agent's gateway connection."""
     if not OPENAI_API_KEY:
         return None
     try:
-        return openai.OpenAI(api_key=OPENAI_API_KEY)
+        kwargs = {"api_key": OPENAI_API_KEY}
+        if JUDGE_BASE_URL:
+            kwargs["base_url"] = JUDGE_BASE_URL
+        return openai.OpenAI(**kwargs)
     except Exception:
         return None
 
 
 _JUDGE_CLIENT = _make_judge_client()
+
+
+def _request_judge_text(request: dict) -> str:
+    """Adapt the transport only; prompts and score parsing remain upstream's."""
+    if JUDGE_API_STYLE == "responses":
+        if JUDGE_REASONING_EFFORT:
+            request = {**request, "reasoning": {**request.get("reasoning", {}), "effort": JUDGE_REASONING_EFFORT}}
+        response = _JUDGE_CLIENT.responses.create(**request)
+        return getattr(response, "output_text", "") or ""
+
+    # Compatible providers need not support GPT-5 reasoning/verbosity options.
+    # The original multi-table prompt already asks for the JSON rubric.
+    chat_request = {
+        "model": request["model"],
+        "messages": [
+            {"role": "system", "content": request["instructions"]},
+            {"role": "user", "content": request["input"]},
+        ],
+        "max_tokens": request["max_output_tokens"],
+    }
+    if JUDGE_REASONING_EFFORT:
+        chat_request["reasoning_effort"] = JUDGE_REASONING_EFFORT
+        # Reasoning models count hidden reasoning in the completion budget.
+        chat_request["max_completion_tokens"] = chat_request.pop("max_tokens")
+    response = _JUDGE_CLIENT.chat.completions.create(**chat_request)
+    return response.choices[0].message.content or ""
 
 
 def _extract_final_answer(action: str, *, prefer_tail: bool = False) -> str:
@@ -137,8 +173,7 @@ def _call_judge(system_prompt: str, user_prompt: str, *, multi_table: bool) -> t
         request["text"] = {"verbosity": "low"}
 
     try:
-        response = _JUDGE_CLIENT.responses.create(**request)
-        out = getattr(response, "output_text", "") or ""
+        out = _request_judge_text(request)
 
         if multi_table:
             try:

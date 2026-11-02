@@ -26,6 +26,31 @@ def test_agent_tools_and_evaluator_behavior_code_matches_upstream():
         migrated = ast.parse((ROOT / "src/finqa_agentic_rl" / name).read_text())
         for tree in (upstream, migrated):
             tree.body = [node for node in tree.body if not isinstance(node, (ast.Import, ast.ImportFrom))]
+        if name == "finqa_eval.py":
+            # Explicitly allow judge connection/transport configuration changes.
+            # The full scoring function is still compared after normalizing its
+            # one transport call; requests are exercised in test_judge_config.py.
+            config_names = {"OPENAI_API_KEY", "JUDGE_MODEL", "MULTI_TABLE_JUDGE_MODEL", "JUDGE_BASE_URL", "JUDGE_API_STYLE", "JUDGE_REASONING_EFFORT"}
+            for tree in (upstream, migrated):
+                tree.body = [
+                    node
+                    for node in tree.body
+                    if not (
+                        (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str))
+                        or (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in config_names for t in node.targets))
+                        or (isinstance(node, ast.FunctionDef) and node.name in {"_make_judge_client", "_request_judge_text"})
+                        or (isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name) and node.test.left.id == "JUDGE_API_STYLE")
+                    )
+                ]
+
+            class NormalizeTransport(ast.NodeTransformer):
+                def visit_Assign(self, node):
+                    if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "_request_judge_text":
+                        assert ast.unparse(node) == "out = _request_judge_text(request)"
+                        return ast.parse('response = _JUDGE_CLIENT.responses.create(**request)\nout = getattr(response, "output_text", "") or ""').body
+                    return node
+
+            migrated = NormalizeTransport().visit(migrated)
         assert ast.dump(upstream) == ast.dump(migrated), name
 
 

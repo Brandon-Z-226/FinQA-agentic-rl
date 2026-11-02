@@ -7,6 +7,9 @@ import pytest
 # Configure before test collection imports the evaluator or the tool store.
 os.environ["FINQA_SKIP_PRELOAD"] = "1"
 os.environ.pop("OPENAI_API_KEY", None)
+for name in list(os.environ):
+    if name.startswith("FINQA_JUDGE_"):
+        os.environ.pop(name)
 os.environ["RLLM_HOME"] = str(Path(__file__).resolve().parents[1] / ".cache/test-rllm")
 
 

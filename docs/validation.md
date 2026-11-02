@@ -1,6 +1,6 @@
 # 本地验证记录
 
-验证日期：2026-10-31（Asia/Shanghai）。环境：macOS / Apple Silicon arm64，uv 0.12.22，Python 3.11.17，项目 `.venv`。没有调用真实模型、judge、远程训练服务，也没有启动 GPU 作业。
+初始离线验证日期：2026-10-31（Asia/Shanghai）。环境：macOS / Apple Silicon arm64，uv 0.12.22，Python 3.11.17，项目 `.venv`。初始验证没有调用真实模型、judge、远程训练服务，也没有启动 GPU 作业。2026-11-03 新增的在线 judge 验证见文末。
 
 ## 环境与依赖
 
@@ -55,3 +55,19 @@ Tinker/Fireworks 的 `--cfg job` 只做配置合成，没有构造或启动 trai
 尚未完成真实模型的两样本评测、gateway token/logprob 链路、一次 optimizer step 或完整 GRPO baseline。第二阶段训练与第三阶段 Credit Assignment 没有开始。CUDA 定义是待 Linux 验证的环境入口，尚无已验证的 GPU lock。
 
 上云前按 README 完成 GPU/镜像兼容性、模型/tool parser/gateway、judge、资源适配配置、指标与成本记录，再开始训练。当前没有实测 Reward、Loss、Agent 成功率、模型 token 消耗或训练成本。
+
+## 2026-11-03：Judge 接入与 low 档位验证
+
+按用户授权使用本地 `.env` 中的配置，调用 OpenAI 官方 `https://api.openai.com/v1` 的 `gpt-6.1-sol`，协议为 Chat Completions。单表和多表请求均显式发送 `reasoning_effort=low`，分别使用 512 / 5000 的 `max_completion_tokens` 上限。每次请求超时上限 60 秒、禁用自动重试。密钥未写入文档、日志或 Git。
+
+| 合成测试 | 实际响应与 evaluator 结果 | API 耗时 |
+| --- | --- | --- |
+| 单表正确答案：120 - 80 = 40 million | 官方格式 `{True, explanation}`；reward=1，is_correct=true | 3.23 秒 |
+| 单表错误答案：120 - 80 = 400 million | 官方格式 `{False, explanation}`；reward=0，is_correct=false | 3.24 秒 |
+| 多表：资产 200、负债 80，权益 120、负债率 40% | 返回完整 JSON，六项评分均为 100；reward=1，is_correct=true | 2.53 秒 |
+
+共发送三次真实请求，均收到正常响应、`finish_reason=stop`，返回模型为 `gpt-6.1-sol`。核对了原始响应后再核对 evaluator 结果，错误答案的 0 分不是请求异常触发的 fallback。API usage 合计输入 2,375 token、输出 168 token、总计 2,543 token；返回的 reasoning token 数为 0，不能用它推断服务内部的实际推理过程。这里验证的是 low 参数已发送且请求成功。
+
+离线回归 `pytest -q --disable-warnings`：**50 项通过，无跳过、无失败**，约 11 秒；仍有原始数据加载的 6,923 条 pandas 弃用警告。覆盖两种 API 协议、单表/多表 low 档位覆盖、默认官方行为、凭证隔离、评分与原始源码一致性。Ruff lint、format check 和 `git diff --check` 通过。
+
+本次仅验证 judge 接入和少量合成答案评分，没有测量 FinQA 全集 judge 质量、真实 Agent 成功率或 GRPO 训练效果。

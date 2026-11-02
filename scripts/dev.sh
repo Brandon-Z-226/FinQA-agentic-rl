@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the local environment from any working directory. No credentials are set.
+# Run the local environment from any working directory; load an optional local .env.
 set -euo pipefail
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -9,4 +9,7 @@ export RLLM_HOME="${RLLM_HOME:-$PROJECT_ROOT/.rllm}"
 export FINQA_DATA_DIR="${FINQA_DATA_DIR:-$PROJECT_ROOT/data}"
 export TMPDIR="${FINQA_TMP_DIR:-$PROJECT_ROOT/.cache/tmp}"
 mkdir -p "$TMPDIR"
+if [[ -f "$PROJECT_ROOT/.env" ]]; then
+    exec uv run --locked --env-file "$PROJECT_ROOT/.env" "$@"
+fi
 exec uv run --locked "$@"

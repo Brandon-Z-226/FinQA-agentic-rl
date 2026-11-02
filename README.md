@@ -51,9 +51,28 @@ bash scripts/dev.sh rllm agent list
 bash scripts/dev.sh python -c 'from rllm.eval.evaluator_loader import load_evaluator; print(load_evaluator("finqa"))'
 ```
 
-`scripts/dev.sh` 默认设置 `RLLM_HOME=$PWD/.rllm`、`FINQA_DATA_DIR=$PWD/data`、`HF_HOME=$PWD/.cache/huggingface`，执行 `uv run --locked`。显式设置的前三个环境变量优先。脚本不会写入或载入 API key。
+`scripts/dev.sh` 默认设置 `RLLM_HOME=$PWD/.rllm`、`FINQA_DATA_DIR=$PWD/data`、`HF_HOME=$PWD/.cache/huggingface`，执行 `uv run --locked`。显式设置的前三个环境变量优先。若项目根目录存在 `.env`，脚本通过 uv 的 `--env-file` 载入；已导出的环境变量优先。
 
 本机 PyPI 连接在默认 TLS 配置下失败，使用系统证书后安装成功，因此项目的 `tool.uv.system-certs` 已开启。初次安装可将缓存也放进项目：`UV_CACHE_DIR=.cache/uv uv sync --locked --group dev`。
+
+## Judge API 配置
+
+在项目根目录的 `.env` 中填写下面三项。首次使用且文件不存在时，可从 `.env.example` 复制。`.env` 已被 Git 忽略，只在本机保存凭证。
+
+```dotenv
+FINQA_JUDGE_API_KEY=你的服务商密钥
+FINQA_JUDGE_BASE_URL=https://服务商提供的接口地址/v1
+FINQA_JUDGE_MODEL=服务商提供的模型标识
+FINQA_JUDGE_API_STYLE=chat_completions
+```
+
+`BASE_URL` 使用服务商给出的 API 根地址，通常以 `/v1` 结尾，不要追加 `/chat/completions`。模板默认使用 OpenAI 兼容 Chat Completions 协议，默认不发送 reasoning/verbosity 参数，也不要求服务商支持 JSON Schema；多表评分仍要求模型按原提示词返回 JSON。支持原始 Responses 请求参数的服务可将 `API_STYLE` 改为 `responses`。
+
+支持推理档位的模型可设置 `FINQA_JUDGE_REASONING_EFFORT=low`，同时应用于单表和多表。Chat Completions 使用 `reasoning_effort` 与包含推理 token 的 `max_completion_tokens`；Responses 使用 `reasoning.effort`。留空时保留原行为：Chat Completions 不传推理档位，Responses 单表 low / 多表 medium。
+
+单表、多表默认都使用 `FINQA_JUDGE_MODEL`；需要不同模型时另设 `FINQA_JUDGE_MULTI_TABLE_MODEL`。这些变量只配置 judge，不改变 Agent 的 `config.base_url` 或训练模型。自定义 judge 地址不会回退使用全局 `OPENAI_API_KEY`。不设置 `FINQA_JUDGE_*` 时保留官方模型与 Responses 行为。
+
+通过 `bash scripts/dev.sh ...` 启动会自动读取 `.env`；直接运行 Python 不会自动读取它。CUDA 环境可用 `uv run --project environments/cuda --env-file .env ...`，从项目根目录启动。judge 在导入时读取配置，修改 `.env` 后应重启进程。更换 judge 会改变评测条件，后续 GRPO / Credit Assignment 实验应固定并记录同一 judge 配置。
 
 ## 数据准备
 
@@ -105,9 +124,9 @@ pytest 屏蔽网络连接，清除测试进程的 judge key，并隔离 DatasetR
 ## 保持的官方行为
 
 - Agent 使用原生 OpenAI tool calling，最多 20 轮，四个工具不变；模型请求使用注入的 `config.base_url`，以便训练 gateway 捕获 token/logprob。
-- 单表 judge 使用 `gpt-5-nano`；多表 judge 使用 `gpt-5-mini` 加原始加权 rubric。judge 与被训练的模型是两条独立调用链。
+- 未配置覆盖项时，单表 judge 使用 `gpt-5-nano`；多表 judge 使用 `gpt-5-mini` 加原始加权 rubric。可按上述方式替换 judge 服务，评分解析与 rubric 保持不变。
 - `EvalOutput.reward` 只有 correctness；table-access 是信号/元数据。没有按 README 中的描述额外把 bonus 加入 reward。
-- 无 `OPENAI_API_KEY` 或 judge 调用异常时，官方 evaluator 返回 0。离线测试验证这个行为，但这种 0 不能作为模型效果评测结果。
+- 无可用 judge key 或 judge 调用异常时，evaluator 返回 0。离线测试验证这个行为，但这种 0 不能作为模型效果评测结果。
 - 所有原始配置保存在 `upstream/finqa/`；迁移训练脚本只调整入口。具体差异见 [迁移说明](docs/migration.md)。
 
 ## GRPO 配置与下一阶段
