@@ -2,10 +2,20 @@
 name = "finqa-cuda-environment"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
-dependencies = ["finqa-agentic-rl", "rllm[verl]==0.3.0.pre"]
+dependencies = [
+    "finqa-agentic-rl",
+    "rllm[verl]==0.3.0.pre",
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
+    "torchvision==0.26.0",
+    "ninja",
+    "packaging",
+    "psutil",
+]
 
 [tool.uv]
 package = false
+system-certs = true
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 override-dependencies = ["litellm[proxy]==1.83.0", "numpy>=1.26.0", "rich>=14.1.0"]
 
@@ -13,6 +23,14 @@ override-dependencies = ["litellm[proxy]==1.83.0", "numpy>=1.26.0", "rich>=14.1.
 finqa-agentic-rl = { path = "../..", editable = true }
 rllm = { git = "https://github.com/rllm-org/rllm.git", rev = "4e828c81680e5a85b638ceedeaf09d1e90109ca8" }
 rllm-model-gateway = { git = "https://github.com/rllm-org/rllm.git", rev = "4e828c81680e5a85b638ceedeaf09d1e90109ca8", subdirectory = "rllm-model-gateway" }
+torch = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.uv.extra-build-dependencies]
-flash-attn = [{ requirement = "torch", match-runtime = true }]
+flash-attn = [{ requirement = "torch", match-runtime = true }, { requirement = "ninja" }, { requirement = "packaging" }, { requirement = "psutil" }]

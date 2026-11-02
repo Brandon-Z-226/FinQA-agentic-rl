@@ -1,0 +1,11 @@
+# Hydra searchpath must be declared in the primary config, not an inherited one.
+defaults:
+  - rllm: base
+  - rllm/backend: verl
+  - a800_common
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://rllm.trainer.config
+    - pkg://verl.trainer.config

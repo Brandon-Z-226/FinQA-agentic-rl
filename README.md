@@ -14,11 +14,15 @@ src/finqa_agentic_rl/
   finqa_constants.py        # 数据和提示词路径
   prepare_finqa_data.py     # 固定数据下载、校验、注册
   train.py                 # 官方 AgentTrainer 入口
+  gpu.py                   # GPU 准备、预检查与启动命令
   prompts/                 # 3 个原始提示词
   data_source.json         # 数据 revision / SHA256
 scripts/
   dev.sh                   # 项目内环境与缓存
+  gpu.sh                   # 独立 Linux GPU 环境入口
+  check_gpu_config.py      # 不安装 GPU 包的 Hydra/同步检查
   train_{verl,tinker,fireworks}.sh
+configs/a800_*.yaml         # 单 A800 LoRA 配置与一步 smoke
 environments/cuda/          # 独立 Linux GPU 环境定义
 upstream/finqa/             # 完整未修改的官方 Cookbook 快照
 upstream/manifest.json      # 上游逐文件 SHA256
@@ -119,7 +123,7 @@ pytest 屏蔽网络连接，清除测试进程的 judge key，并隔离 DatasetR
 
 另对核心行为 AST、提示词字节、原始文件摘要、所有训练 override 做一致性检查。wheel 构建后还需验证其中包含提示词、数据来源配置和插件入口。执行结果及已知限制见 [本地验证记录](docs/validation.md)。
 
-本地没有 verl，Hydra 解析 Tinker/Fireworks 时会提示 verl search path 不存在，但可以完成配置合成；verl 配置本阶段检查原始参数一致性和 shell 语法，完整合成与执行留待 Linux 环境。原始表加载在当前 pandas 版本会产生弃用警告，未影响本次验证。
+本地没有安装 verl。单卡配置通过 `scripts/check_gpu_config.py` 使用官方 verl wheel 中的 YAML 以及固定 rLLM 的配置同步函数进行实际合成和参数检查；不导入 GPU backend，执行验证仍留待 Linux。Tinker/Fireworks 的配置解析会提示 verl search path 不存在，但可以完成合成。原始表加载的 pandas 弃用警告未影响验证。
 
 ## 保持的官方行为
 
@@ -127,20 +131,22 @@ pytest 屏蔽网络连接，清除测试进程的 judge key，并隔离 DatasetR
 - 未配置覆盖项时，单表 judge 使用 `gpt-5-nano`；多表 judge 使用 `gpt-5-mini` 加原始加权 rubric。可按上述方式替换 judge 服务，评分解析与 rubric 保持不变。
 - `EvalOutput.reward` 只有 correctness；table-access 是信号/元数据。没有按 README 中的描述额外把 bonus 加入 reward。
 - 无可用 judge key 或 judge 调用异常时，evaluator 返回 0。离线测试验证这个行为，但这种 0 不能作为模型效果评测结果。
-- 所有原始配置保存在 `upstream/finqa/`；迁移训练脚本只调整入口。具体差异见 [迁移说明](docs/migration.md)。
+- 所有原始配置保存在 `upstream/finqa/`；迁移脚本调整入口，并为 verl FSDP 补齐真正启用 LoRA 的 flat rank/alpha 字段。具体差异见 [迁移说明](docs/migration.md)。
 
 ## GRPO 配置与下一阶段
 
-`scripts/train_verl.sh` 保留官方 4B GRPO 配置：`Qwen/Qwen3-4B-Instruct-2507`、LoRA rank/alpha 32、group size 4、batch 16、PPO minibatch 64、学习率 1e-6、8 GPU、1 epoch、8192/4096 prompt/response 上限、max model len 16384、async vLLM、Hermes tool parser。原配置已归档，**尚未跑出 GRPO baseline 结果**。
+`scripts/train_verl.sh` 保留官方 4B GRPO 参数和 8 GPU 入口，并修正 LoRA：verl 0.8.0 FSDP 读取 `model.lora_rank/lora_alpha`，只设置原来的 nested `model.lora.rank/alpha` 会留下 flat rank=0。现在两组字段均为 32；原始快照未改。**尚未跑出 GRPO baseline 结果**。
+
+单 A800 使用新增的 `configs/a800_80gb.yaml`：保留 group 4、train batch 16、PPO minibatch 64、lr 1e-6、1 epoch、8192/4096/16384 长度及 Hermes parser，改为 1 GPU、CPU offload、8 并发、vLLM 显存比例 0.5 和 eager 模式。先用 `a800_smoke.yaml` 跑 2 条样本、1 step，再跑完整训练。环境安装、固定模型下载、两条评测、LoRA 检查、训练和 checkpoint 验收见 [A800 部署说明](environments/cuda/README.md)。50GB 数据盘余量紧，应在租机前确认容量方案。
 
 Tinker 和 Fireworks 脚本也保留，但分别使用上游 30B/35B MoE 模型，不能拿它们的结果当作 4B 公平对照。它们是远程训练后端，不会在这台 Mac 上本地训练相应模型。
 
 真正上云前还需完成：
 
-1. 选择可承受的 GPU、显存和镜像，验证驱动/CUDA/PyTorch/verl/vLLM/flash-attn 组合，并生成、提交 CUDA 环境锁文件。详见 [CUDA 环境说明](environments/cuda/README.md)。
+1. 在 A800 上选定 CUDA 13.0 devel 镜像，实测 PyTorch 2.11.0 / verl 0.8.0 / vLLM 0.22.1 / flash-attn 2.8.3，生成并提交 CUDA 锁文件，确认磁盘容量。详见 [CUDA 环境说明](environments/cuda/README.md)。
 2. 部署兼容工具调用的 4B 模型，验证 tokenizer、chat template、Hermes parser，以及 gateway 的 token IDs/logprobs 捕获。
 3. 在进程启动前配置可用的 judge 凭证，验证 judge 失败率和计费；先运行 2 条真实 Agent/evaluator 评测，再完成一次 optimizer step。
-4. 为资源适配另存配置，核对 group/batch/minibatch、并行与 offload；保留原始 8 GPU 基线作为比较参照。
+4. 实测新增单卡配置的峰值显存、LoRA checkpoint、恢复能力和稳定性；保留原始 8 GPU 配置作为来源参照。
 5. 确认 Reward、Loss、成功率、prompt/completion token、judge token、GPU 小时及实际账单的记录位置。官方 console/UI logger 被保留；成本汇总尚未实现，也没有任何实测成本。
 6. 在固定 split、初始模型、judge/prompt、采样、seed 和预算后完成标准 GRPO，再开展 Credit Assignment 对比；本阶段未加入改进算法。
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Derived from rLLM FinQA Cookbook; Apache-2.0.
-# Modified: module entry point and optional FINQA_PYTHON; all overrides preserved.
+# Modified: module entry point, FINQA_PYTHON, and FSDP LoRA rank/alpha fields.
 set -euo pipefail
 
 unset ROCR_VISIBLE_DEVICES 2>/dev/null || true
@@ -18,6 +18,8 @@ MODEL_PATH=Qwen/Qwen3-4B-Instruct-2507
     data.max_response_length=4096 \
     +model.name=$MODEL_PATH \
     actor_rollout_ref.model.path=$MODEL_PATH \
+    actor_rollout_ref.model.lora_rank=32 \
+    actor_rollout_ref.model.lora_alpha=32 \
     actor_rollout_ref.model.lora.rank=32 \
     actor_rollout_ref.model.lora.alpha=32 \
     actor_rollout_ref.model.lora.merge=true \

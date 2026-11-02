@@ -71,3 +71,25 @@ Tinker/Fireworks 的 `--cfg job` 只做配置合成，没有构造或启动 trai
 离线回归 `pytest -q --disable-warnings`：**50 项通过，无跳过、无失败**，约 11 秒；仍有原始数据加载的 6,923 条 pandas 弃用警告。覆盖两种 API 协议、单表/多表 low 档位覆盖、默认官方行为、凭证隔离、评分与原始源码一致性。Ruff lint、format check 和 `git diff --check` 通过。
 
 本次仅验证 judge 接入和少量合成答案评分，没有测量 FinQA 全集 judge 质量、真实 Agent 成功率或 GRPO 训练效果。
+
+## 2026-11-03：LoRA 修正与单 A800 部署准备
+
+根据固定 verl 0.8.0 源码，FSDP 用 flat `model.lora_rank` 判定 LoRA，默认是 0。原 Cookbook 只设置 nested `model.lora.rank/alpha`，现迁移脚本补齐 flat rank/alpha=32；原始快照完全保留，来源测试仅允许这两项额外参数。
+
+新增独立的单卡训练配置、一步 smoke 配置、Linux uv 环境脚本、固定 revision 的模型下载、CUDA/FlashAttention 运算预检查、meta 模型 LoRA 参数检查及 smoke checkpoint metadata 校验。CUDA 依赖定义选择 torch 2.11.0 cu130 / vLLM 0.22.1 / verl 0.8.0 / flash-attn 2.8.3；没有在本机安装这些 GPU 包，也没有生成经 Linux 验证的 CUDA lock。
+
+本轮实际执行结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| 全量离线 pytest | **63 项通过，无跳过、无失败**，11.27 秒；原始 6,923 条 pandas 警告不变 |
+| LoRA/单卡防回归 | 拒绝 flat rank=0、两套 LoRA 字段不一致、多卡/TP、分离训练、超限长度、无效 GRPO group、过少 smoke 样本 |
+| 部署保护 | 磁盘不足拒绝启动；macOS 在安装前退出；smoke 缺失/错误 LoRA metadata 报错 |
+| 真实 Hydra 合成与 rLLM sync_config | 两个 profile 均通过；正式配置 rank=32、n=4、batch=16、1 epoch；smoke batch=2、1 step |
+| 训练模块 dry run | `python -m finqa_agentic_rl.train --config-name a800_smoke --cfg job --resolve` 成功，未进入训练函数 |
+| Ruff / shell / Git diff | lint、format、bash 语法和空白检查通过 |
+| 根 uv lock | `uv lock --check --offline` 通过，179 个解析条目；根依赖未改变 |
+
+静态配置验证从 PyPI 官方 verl 0.8.0 wheel 校验 SHA256 后提取配置到忽略的 `.cache/gpu-static/`，没有安装 wheel。脚本仅执行已安装且固定的 rLLM 源码中的配置同步函数，检查实际同步后的值，不使用手写替代规则。`--fetch` 可重新获取，之后可离线复查。该检查没有实例化 verl 配置 dataclass、导入 CUDA backend 或执行 GPU 算子。
+
+尚未执行：云端 uv lock/sync、CUDA runtime check、权重下载、真实 Agent 两样本评测、meta LoRA 检查、FSDP optimizer step、checkpoint 保存/恢复、完整 epoch、显存峰值和吞吐测量。部署入口中的这些动作是待实机执行的验收步骤，不能把新增脚本或本地 63 项测试视作它们已经通过。当前仍无 GRPO baseline 或成本测量。

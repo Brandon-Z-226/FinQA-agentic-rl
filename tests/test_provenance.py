@@ -58,6 +58,13 @@ def test_training_overrides_preserved_and_shell_syntax():
     for backend in ("tinker", "verl", "fireworks"):
         original = (ROOT / f"upstream/finqa/train_{backend}.sh").read_text()
         migrated = (ROOT / f"scripts/train_{backend}.sh").read_text()
+        if backend == "verl":
+            # The archived cookbook only sets the nested Megatron/merge fields.
+            # verl 0.8.0 FSDP actually enables PEFT using the flat fields.
+            for field in ("lora_rank", "lora_alpha"):
+                addition = f"    actor_rollout_ref.model.{field}=32 \\\n"
+                assert migrated.count(addition) == 1
+                migrated = migrated.replace(addition, "")
         assert (
             original[original.index("set -euo pipefail") :].replace("python -u train.py", '"${FINQA_PYTHON:-python}" -u -m finqa_agentic_rl.train') == migrated[migrated.index("set -euo pipefail") :]
         )
