@@ -36,6 +36,8 @@ export TMPDIR="$FINQA_GPU_ROOT/tmp"
 export RAY_TMPDIR="${RAY_TMPDIR:-/tmp/finqa-ray}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export MAX_JOBS="${MAX_JOBS:-4}"
+# A800 is SM80. Avoid compiling unused Hopper/Blackwell kernels by default.
+export FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export TOKENIZERS_PARALLELISM=false
 mkdir -p "$TMPDIR"

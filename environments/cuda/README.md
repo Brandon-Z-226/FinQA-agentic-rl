@@ -1,14 +1,14 @@
 # 单张 A800 80GB 部署与验收
 
-这是独立的 Linux x86_64 / Python 3.11 uv 环境，与根目录的 macOS `.venv` 分离。当前完成源码核对、部署入口和本地静态验证，**没有在 A800 上安装依赖或执行训练**。GPU `uv.lock` 要在选定的 Linux 镜像中生成并验证；根项目锁文件不能代替它。
+这是独立的 Linux x86_64 / Python 3.11 uv 环境，与根目录的 macOS `.venv` 分离。2026-11-07 已在 AutoDL A800 上安装并锁定依赖，通过 GPU 算子、LoRA 参数、数据/配置检查与两条真实 Agent 推理；**尚未执行训练或 Optimizer Step**。`uv pip check` 仍有固定 verl/vLLM 组合的 NumPy 元数据冲突，不能称为完整依赖验收通过。实测版本、网络方案、日志和限制见 [AutoDL 部署记录](../../docs/deployment-autodl.md)。根项目锁文件不能代替 CUDA lock。
 
 ## 机器与 CUDA 版本
 
-计划租用的机器提供 A800 80GB × 1、14 核 CPU、120GB RAM、驱动 580.65.06、30GB 系统盘和 50GB 数据盘。LoRA、CPU offload 和有限 rollout 并发是本配置的起点，实际峰值显存和速度必须通过 smoke 测量。4B 全量训练并非理论上绝对不可能，但不能只按 BF16 权重约 8GB 计算，还要包含梯度、Adam 状态、激活、vLLM 和权重同步峰值。
+原租机截图为 A800 80GB × 1、14 核 CPU、120GB RAM、驱动 580.65.06、30GB 系统盘和 50GB 数据盘；实际服务器为驱动 590.48.01、CUDA Toolkit 13.0.88、90 GiB 数据盘。LoRA、CPU offload 和有限 rollout 并发是本配置的起点，训练峰值显存和速度必须通过 smoke 测量。4B 全量训练并非理论上绝对不可能，但不能只按 BF16 权重约 8GB 计算，还要包含梯度、Adam 状态、激活、vLLM 和权重同步峰值。
 
 固定 rLLM 的 extras 指定 `verl==0.8.0`、`vllm==0.22.1`、`flash-attn==2.8.3`。vLLM 0.22.1 的 [CUDA 依赖](https://github.com/vllm-project/vllm/blob/v0.22.1/requirements/cuda.txt) 指定 PyTorch 2.11.0 / torchaudio 2.11.0 / torchvision 0.26.0，其 [Dockerfile](https://github.com/vllm-project/vllm/blob/v0.22.1/docker/Dockerfile) 使用 CUDA 13.0.2。本环境选择 cu130 PyTorch 索引和 CUDA 13.0 开发镜像，不任意混装最新 torch 或 CUDA 12.x wheel。
 
-租机时选 **Linux x86_64、CUDA 13.0 devel（含 nvcc）、Python 3、git、g++、make、uv** 的镜像。脚本不修改宿主驱动或系统 Python，不依赖预装 torch，只创建数据盘上的 uv 环境。`flash-attn` 可能需要编译，默认 `MAX_JOBS=4` 控制内存。平台“CUDA ≤13.0”表示驱动能力，不表示镜像已安装 nvcc。[CUDA 13.0 release notes](https://docs.nvidia.com/cuda/archive/13.0.0/cuda-toolkit-release-notes/) 列出 580.65.06 驱动；具体 wheel 与算子兼容性仍由 `check` 实测。
+租机时选 **Linux x86_64、CUDA 13.0 devel（含 nvcc）、Python 3、git、g++、make、uv** 的镜像。脚本不修改宿主驱动或系统 Python，不依赖预装 torch，只创建数据盘上的 uv 环境。`flash-attn` 可能需要编译，默认 `MAX_JOBS=4` 控制内存，`FLASH_ATTN_CUDA_ARCHS=80` 仅构建 A800 架构；本次确认配额后使用 MAX_JOBS=10 编译成功。平台“CUDA ≤13.0”表示驱动能力，不表示镜像已安装 nvcc。[CUDA 13.0 release notes](https://docs.nvidia.com/cuda/archive/13.0.0/cuda-toolkit-release-notes/) 列出 580.65.06 驱动；具体 wheel 与算子兼容性仍由 `check` 实测。
 
 **磁盘需要提前确认。** 50GB 要同时容纳环境/构建缓存、约 8GB 模型、输出和 checkpoint，余量很紧。此 verl 版本保存可恢复的 FSDP checkpoint 时包含模型状态，并非只有小型 adapter，FP32 基座状态可能约 16GB。配置每个实验最多保留一个 actor checkpoint，但 smoke 和正式训练的目录各自保留一个，安装/保存也可能需要临时空间。建议选择可提供约 80–100GB 可用数据空间的方案；截图的扩容上限若确实只有 9GB，应先向平台确认更大磁盘或挂载方案。这是容量规划建议，不是实测峰值。
 
@@ -29,6 +29,8 @@ bash scripts/gpu.sh config > "$FINQA_GPU_ROOT/checks/composed-config.yaml"
 ```
 
 `setup` 检查平台、nvcc、构建工具和至少 40GiB 安装前空闲空间，再生成 `environments/cuda/uv.lock` 并用 `--locked` 同步和执行 `uv pip check`。首次成功安装后保存并提交 CUDA lock，同时记录镜像名称/digest。依赖解析或编译失败时保留错误，修订环境定义，不绕过检查启动训练。
+
+**当前已知例外：** 依赖安装与运行时检查成功，但 `setup` 的最后一步仍报告 `verl requires numpy<2.0.0, but 2.3.5 is installed` 并返回非零。固定 rLLM 的 override 与新版 vLLM 所需 NumPy 2 存在这一元数据差异；本仓库只补上 `<2.4` 上界，没有篡改第三方声明或关闭 `pip check`。详见部署记录。不能用 `|| true` 将它视为安装验收成功，也不要因此直接启动训练。
 
 `download` 按 `model.json` 固定下载 `Qwen/Qwen3-4B-Instruct-2507@cdbee75f17c01a7cc42f958dc650907174af0554`，直接使用 HF snapshot，避免第二份模型副本。默认路径是：
 

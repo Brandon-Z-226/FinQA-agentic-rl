@@ -110,3 +110,13 @@ Tinker/Fireworks 的 `--cfg job` 只做配置合成，没有构造或启动 trai
 API usage 合计输入 4,305、输出 1,200、总计 5,505 token，包括首次发现格式问题的请求。这里只是少量合成用例的接入和解析检查，尚未评估 Qwen 在完整 FinQA 上的评分质量或与原 judge 的一致性。
 
 完整离线回归：**68 项通过，无跳过、无失败**，13.54 秒；仍有原始表加载产生的 6,923 条 pandas 警告。新增代码块大小写/无语言标签兼容，以及无效或嵌入式 JSON 的回归测试。原始快照和核心评分 AST 一致性、Ruff lint/format 均通过。
+
+## 2026-11-07：AutoDL A800 实机部署与推理
+
+通过 SSH 在 A800 80GB / 驱动 590.48.01 / CUDA Toolkit 13.0.88 上建立独立 uv 环境，保存 Linux CUDA lock。PyTorch 2.11.0+cu130、vLLM 0.22.1、verl 0.8.0、FlashAttention 2.8.3 的真实导入与 CUDA/FlashAttention 运算通过。固定模型三个权重分片与官方 SHA256 一致；FinQA 4030/522/558、Agent/Evaluator 注册、实际 rLLM 配置同步和 LoRA 参数选择通过。
+
+独立 vLLM 的两条真实 val 推理均 reward=1、table_access=1、errors=0，合计 9 次模型调用，vLLM 指标为输入 17,424 / 输出 1,746 tokens。工具调用及 episode 已保存；观察显存约 39.6 GiB，完成后停止本次服务，显存回到 0 MiB。这是两样本链路验证，不是完整评测或训练指标。episode 中训练 token ID/logprob 字段为空，尚未验证训练对齐。
+
+实际发现并修正 uv 构建依赖写法、FlashAttention 多架构构建开销和 NumPy 缺少上界的问题。**`uv pip check` 仍有 verl 的 NumPy <2 与固定 vLLM 栈所需 NumPy 2 的一项元数据冲突，setup 返回非零，不能报告依赖全通过。** 保留 rLLM 上游 override，尚未为此升级核心框架。安装过程、差异、运行结果与后续条件详见 [AutoDL 部署记录](deployment-autodl.md)。
+
+本地回归再次 **68 passed**（14.45 秒），Ruff lint/format 通过。未执行 GRPO、首次 Optimizer Step、checkpoint 保存/恢复或完整 epoch；用户仍需明确授权首次训练步骤。

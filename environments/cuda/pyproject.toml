@@ -17,7 +17,9 @@ dependencies = [
 package = false
 system-certs = true
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
-override-dependencies = ["litellm[proxy]==1.83.0", "numpy>=1.26.0", "rich>=14.1.0"]
+# rLLM overrides verl's NumPy <2 bound for the newer vLLM stack.
+# Preserve that upstream choice, but respect mistral-common's Python 3.11 bound.
+override-dependencies = ["litellm[proxy]==1.83.0", "numpy>=2,<2.4", "rich>=14.1.0"]
 
 [tool.uv.sources]
 finqa-agentic-rl = { path = "../..", editable = true }
@@ -33,4 +35,4 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.extra-build-dependencies]
-flash-attn = [{ requirement = "torch", match-runtime = true }, { requirement = "ninja" }, { requirement = "packaging" }, { requirement = "psutil" }]
+flash-attn = [{ requirement = "torch", match-runtime = true }, "ninja", "packaging", "psutil"]
