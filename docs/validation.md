@@ -93,3 +93,20 @@ Tinker/Fireworks 的 `--cfg job` 只做配置合成，没有构造或启动 trai
 静态配置验证从 PyPI 官方 verl 0.8.0 wheel 校验 SHA256 后提取配置到忽略的 `.cache/gpu-static/`，没有安装 wheel。脚本仅执行已安装且固定的 rLLM 源码中的配置同步函数，检查实际同步后的值，不使用手写替代规则。`--fetch` 可重新获取，之后可离线复查。该检查没有实例化 verl 配置 dataclass、导入 CUDA backend 或执行 GPU 算子。
 
 尚未执行：云端 uv lock/sync、CUDA runtime check、权重下载、真实 Agent 两样本评测、meta LoRA 检查、FSDP optimizer step、checkpoint 保存/恢复、完整 epoch、显存峰值和吞吐测量。部署入口中的这些动作是待实机执行的验收步骤，不能把新增脚本或本地 63 项测试视作它们已经通过。当前仍无 GRPO baseline 或成本测量。
+
+## 2026-11-06：Qwen judge 接入验证
+
+用户更新本地 `.env` 后，实际测试 `https://maas.qianwenaiapi.com/compatible-mode/v1` 上的 `qwen3.8-max-0902`，采用 Chat Completions；单表和多表使用同一模型。四次请求均携带 `reasoning_effort=low`，均正常返回该模型标识和 `finish_reason=stop`。这证明参数随请求发送且调用成功，不单独证明服务内部如何实现 low。每次超时 60 秒、禁用自动重试，未修改 `.env` 或输出密钥。
+
+| 合成测试 | evaluator 结果 | API 耗时 |
+| --- | --- | --- |
+| 单表正确：120 - 80 = 40 million | reward=1，is_correct=true | 3.75 秒 |
+| 单表错误：120 - 80 = 400 million | reward=0，is_correct=false；真实响应明确判错，并非异常 fallback | 4.32 秒 |
+| 多表首次：资产/负债推导权益与比例 | 服务返回六项 100 分，但 JSON 带 Markdown 代码块；原解析得到 reward=0 | 9.61 秒 |
+| 多表兼容修复后复测 | 成功解析六项评分，reward=0.9825，is_correct=true | 12.11 秒 |
+
+兼容修复仅针对 Chat Completions 多表响应：若完整响应是一个 JSON Markdown 代码块，移除外层标记，再交给原有 JSON 解析及加权评分。不会从附带其他说明的文本中任意抽取 JSON，也不改变单表判定、rubric、权重或 Responses 分支。复测中 Qwen 给 reasoning/structure 分别 90/95，其余四项为 100，原有权重计算得到 0.9825；不能将两次评分差异解释为修复改变了评分规则。
+
+API usage 合计输入 4,305、输出 1,200、总计 5,505 token，包括首次发现格式问题的请求。这里只是少量合成用例的接入和解析检查，尚未评估 Qwen 在完整 FinQA 上的评分质量或与原 judge 的一致性。
+
+完整离线回归：**68 项通过，无跳过、无失败**，13.54 秒；仍有原始表加载产生的 6,923 条 pandas 警告。新增代码块大小写/无语言标签兼容，以及无效或嵌入式 JSON 的回归测试。原始快照和核心评分 AST 一致性、Ruff lint/format 均通过。

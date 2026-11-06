@@ -100,7 +100,14 @@ def _request_judge_text(request: dict) -> str:
         # Reasoning models count hidden reasoning in the completion budget.
         chat_request["max_completion_tokens"] = chat_request.pop("max_tokens")
     response = _JUDGE_CLIENT.chat.completions.create(**chat_request)
-    return response.choices[0].message.content or ""
+    out = response.choices[0].message.content or ""
+    # Compatible judges may wrap the multi-table JSON in a Markdown fence.
+    # Strip only a complete outer fence; keep scoring and JSON validation intact.
+    if request.get("text", {}).get("format", {}).get("type") == "json_schema":
+        fenced = re.fullmatch(r"\s*```(?:json)?\s*\n(.*?)\n```\s*", out, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            out = fenced.group(1)
+    return out
 
 
 def _extract_final_answer(action: str, *, prefer_tail: bool = False) -> str:

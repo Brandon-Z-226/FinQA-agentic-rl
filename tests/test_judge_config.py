@@ -72,6 +72,26 @@ def test_unsupported_api_style_fails_before_requests(judge_env):
         importlib.reload(evaluator)
 
 
+@pytest.mark.parametrize("fence", ["```json", "```JSON", "```"])
+def test_chat_multi_table_accepts_complete_json_fence(monkeypatch, fence):
+    rubric = {**dict.fromkeys(evaluator.CORRECTNESS_WEIGHTS, 100), "explanation": "Correct."}
+    content = f"{fence}\n{json.dumps(rubric)}\n```"
+    endpoint = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))]))
+    monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
+    monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=endpoint)))
+    verdict, parsed = evaluator._call_judge("system", "input", multi_table=True)
+    assert verdict == 1.0
+    assert parsed == rubric
+
+
+@pytest.mark.parametrize("content", ["```json\nnot JSON\n```", 'Explanation first\n```json\n{"primary_data_score": 100}\n```'])
+def test_chat_multi_table_does_not_salvage_invalid_or_embedded_json(monkeypatch, content):
+    endpoint = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))]))
+    monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
+    monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=endpoint)))
+    assert evaluator._call_judge("system", "input", multi_table=True) == (0.0, {})
+
+
 @pytest.mark.parametrize("style", ["responses", "chat_completions"])
 @pytest.mark.parametrize("multi", [False, True])
 def test_low_reasoning_override_for_both_protocols_and_rubrics(judge_env, style, multi):

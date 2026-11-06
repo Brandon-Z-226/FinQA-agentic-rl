@@ -21,6 +21,8 @@
 
 源码优先于过时说明：上游 README 说会把 table-access bonus 加到奖励，但实际 `EvalOutput.reward` 只有 correctness。本项目保持实际实现；`table_access` 和 `right_table_access_reward` 仅作为信号/元数据。上游还会记录失败的 `get_table_info` 尝试；该行为也保留。
 
+2026-11-06：Qwen 在线测试发现多表 JSON 带 Markdown 代码块，原始解析会误记 0 分。Chat Completions 传输适配增加完整外层 JSON 代码块的去除，之后仍使用原始 JSON 校验和 rubric 加权逻辑；Responses 和单表行为不变。测试明确验证有效代码块，以及无效/混合说明文本不被任意恢复。在线复测与 68 项离线结果见 [验证记录](validation.md)。
+
 2026-11-03：核对 verl 0.8.0 后修正 FSDP LoRA 开关，迁移的 8 GPU 脚本只新增 flat `lora_rank/lora_alpha=32` 两项，原 nested 字段与原始快照不变。另建单 A800 配置，限制 GPU 数、执行并发、vLLM 显存比例和 checkpoint 保留数，明确对齐 rLLM/verl 共享配置；smoke 单独限制样本及 step。新增 Linux uv 部署入口、固定模型下载、运行时检查和 LoRA checkpoint 校验，不在 Mac 安装 CUDA 包。版本依据、参数差异及尚未完成的实机验收见 [A800 部署说明](../environments/cuda/README.md)。
 
 `scripts/dev.sh` 将 rLLM 注册目录和缓存放在项目内，避免写入或覆盖已有的全局注册；可用环境变量显式覆盖。环境变量应在进程启动前设置，因为上游 DatasetRegistry 和 judge 会在导入时读取配置。无需为 entry-point 注册写用户 registry 文件。
