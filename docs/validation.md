@@ -128,3 +128,11 @@ API usage 合计输入 4,305、输出 1,200、总计 5,505 token，包括首次�
 保存完整日志、Git/依赖/配置快照和资源采样。显存最大采样值为 preflight 的 537 MiB，进程 RSS 总和约 1.46 GiB；初版监测未覆盖 cgroup v1，不能报告完整容器内存峰值。按 ¥5.59/小时，本次作业窗口约 ¥0.0705，不含其他开机时间。
 
 失败后增加 `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`，实际调用原报错函数验证通过，没有启动集群或重试训练；另修正 cgroup v1/v2 监测。首次运行前 70 项离线测试通过。详情与验收边界见 [首次 smoke 报告](smoke-autodl-2026-11-07.md)。
+
+## 2026-11-09：第二次授权的单步 smoke 尝试
+
+以 `af1c559` 和原 CUDA lock 启动一次现有 smoke。真实 FSDP LoRA / 模型及训练 vLLM 初始化成功，两题各四条 rollout 全部 ENV_DONE、reward=1，共 37 次模型调用；随后在 `DataProto.to_tensordict()` 因 TensorDict 0.8.3 低于接口要求的 0.10 而失败。未到优势、loss、backward 或 optimizer，无 checkpoint，没有第三次尝试。相同组内奖励预计产生零优势，但本次未实际计算，不能归为优化器异常。
+
+总耗时 208.983 秒，rollout 31.166 秒，GPU 最大采样 58,048 MiB（56.69 GiB），容器内存最高 44.41 GiB，未发生 OOM；结束 GPU 0 MiB。按 ¥5.59/小时，本次作业窗口约 ¥0.3245。原 judge 计数器漏记：实际有 8 次完成的逻辑评估，HTTP 尝试次数及 token 用量未知；token/logprob 审计保存点过晚，本次对齐证据未取得。
+
+失败后固定 TensorDict 0.10.0、更新独立 CUDA lock，并在真实安装环境用 CPU 验证张量和 uid 转换通过；核心框架、NumPy 及实验 YAML 不变，pip check 的唯一 NumPy 元数据例外原样保留。修正后续审计保存点和公开 judge endpoint 传递，未重启训练。本地 **74 passed**（13.83 秒），Ruff lint/format、shell/Git 检查、真实 Hydra 与固定 rLLM 配置同步通过。详见 [第二次 smoke 报告](smoke-autodl-2026-11-09.md)，完整单步仍未验收。

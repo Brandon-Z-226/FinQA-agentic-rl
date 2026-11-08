@@ -8,6 +8,8 @@ dependencies = [
     "torch==2.11.0",
     "torchaudio==2.11.0",
     "torchvision==0.26.0",
+    # verl's EngineWorker path calls DataProto.to_tensordict(), which needs 0.10.
+    "tensordict==0.10.0",
     "ninja",
     "packaging",
     "psutil",

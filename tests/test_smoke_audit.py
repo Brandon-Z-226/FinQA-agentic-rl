@@ -46,10 +46,13 @@ def test_one_optimizer_call_and_parameter_change(audit, monkeypatch):
     assert update["max_abs_delta"] > 0
 
 
-def test_judge_usage_without_credentials(audit, monkeypatch):
+@pytest.mark.parametrize("endpoint_var", ["FINQA_JUDGE_BASE_URL", "FINQA_SMOKE_JUDGE_ENDPOINT"])
+def test_judge_usage_without_credentials(audit, monkeypatch, endpoint_var):
     import httpx._client
 
-    monkeypatch.setenv("FINQA_JUDGE_BASE_URL", "https://judge.invalid/v1")
+    monkeypatch.delenv("FINQA_JUDGE_BASE_URL", raising=False)
+    monkeypatch.delenv("FINQA_SMOKE_JUDGE_ENDPOINT", raising=False)
+    monkeypatch.setenv(endpoint_var, "https://judge.invalid/v1")
     original = httpx.Client.send
     monkeypatch.setattr(httpx.Client, "send", original)
     audit.patch_http(httpx._client)
@@ -61,6 +64,50 @@ def test_judge_usage_without_credentials(audit, monkeypatch):
     assert '"total_tokens": 42' in recorded
     assert "DO_NOT_RECORD" not in recorded
     assert "PRIVATE_PROMPT" not in recorded
+
+
+def test_rollouts_saved_before_backend_conversion_failure(audit):
+    import asyncio
+
+    step = SimpleNamespace(prompt_ids=[1, 2], response_ids=[3], logprobs=[-0.5])
+    episode = SimpleNamespace(id="question:0", is_correct=True, termination_reason="ENV_DONE", trajectories=[SimpleNamespace(reward=1.0, steps=[step])])
+
+    class Backend:
+        def __init__(self):
+            pass
+
+        async def generate_episodes(self):
+            return [episode]
+
+        async def process_backend_batch(self):
+            raise AssertionError("conversion failed")
+
+        async def compute_advantages(self):
+            pass
+
+        update_policy = on_batch_end = on_policy_updated = compute_advantages
+
+    audit.patch_backend(SimpleNamespace(VerlBackend=Backend))
+    backend = Backend()
+    assert asyncio.run(backend.generate_episodes()) == [episode]
+    with pytest.raises(AssertionError):
+        asyncio.run(backend.process_backend_batch())
+    saved = json.loads(next(Path(audit.ROOT).glob("rollouts-*.json")).read_text())
+    assert saved[0]["steps"] == [{"prompt_ids": [1, 2], "response_ids": [3], "logprobs": [-0.5]}]
+
+
+def test_ray_audit_forwards_only_public_endpoint(audit, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", "/audit")
+    monkeypatch.setenv("FINQA_JUDGE_BASE_URL", "https://judge.invalid/v1")
+    monkeypatch.setenv("FINQA_JUDGE_API_KEY", "DO_NOT_FORWARD")
+    module = SimpleNamespace(get_ppo_ray_runtime_env=lambda: {"env_vars": {}})
+    audit.patch_ray_env(module)
+    env = module.get_ppo_ray_runtime_env()["env_vars"]
+    assert env["FINQA_SMOKE_JUDGE_ENDPOINT"] == "https://judge.invalid/v1"
+    assert "DO_NOT_FORWARD" not in json.dumps(env)
+    monkeypatch.setenv("FINQA_JUDGE_BASE_URL", "https://judge.invalid/v1?key=PRIVATE")
+    with pytest.raises(ValueError, match="embedded credentials"):
+        module.get_ppo_ray_runtime_env()
 
 
 def test_cgroup_v1_and_v2_memory(tmp_path):

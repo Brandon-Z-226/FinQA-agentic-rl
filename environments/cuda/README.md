@@ -4,6 +4,8 @@
 
 随后在用户授权下进行的首次 GRPO smoke 在 Ray/uv 环境处理阶段失败，实际 Optimizer Step=0；失败后已修复启动开关但没有自动重跑，详见 [首次 smoke 报告](../../docs/smoke-autodl-2026-11-07.md)。用户已接受当前 NumPy 元数据例外，`pip check` 仍保留非零结果。
 
+2026-11-09 再次获授权后，真实 FSDP LoRA 加载及 8 条 rollout 成功，随后因 TensorDict 0.8.3 不满足 verl 的转换接口要求而停止，Optimizer Step 仍为 0。失败后已固定 TensorDict 0.10.0、更新 CUDA lock，并通过实际 CPU 转换检查；没有再次启动训练。显存最大采样 56.69 GiB，尚未覆盖 backward。详见 [第二次 smoke 报告](../../docs/smoke-autodl-2026-11-09.md)。
+
 ## 机器与 CUDA 版本
 
 原租机截图为 A800 80GB × 1、14 核 CPU、120GB RAM、驱动 580.65.06、30GB 系统盘和 50GB 数据盘；实际服务器为驱动 590.48.01、CUDA Toolkit 13.0.88、90 GiB 数据盘。LoRA、CPU offload 和有限 rollout 并发是本配置的起点，训练峰值显存和速度必须通过 smoke 测量。4B 全量训练并非理论上绝对不可能，但不能只按 BF16 权重约 8GB 计算，还要包含梯度、Adam 状态、激活、vLLM 和权重同步峰值。
@@ -48,7 +50,7 @@ $FINQA_GPU_ROOT/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507/snapshots/c
 
 `lora-check` 在 meta device 构建同一架构并应用 PEFT，不分配完整权重，确认可训练参数只有 LoRA 且比例低于 5%。这验证参数选择；真正 FSDP worker 是否启用 LoRA，需由训练和 checkpoint 验证。
 
-脚本显式设置 `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`：固定 rLLM 的 `working_dir=None` 会触发 Ray 2.60.0 自动 uv hook 的路径类型错误。关闭自动重写后，单节点继续使用已安装的独立环境；函数级检查通过，尚未通过第二次 smoke 验证 worker 启动。
+脚本显式设置 `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`：固定 rLLM 的 `working_dir=None` 会触发 Ray 2.60.0 自动 uv hook 的路径类型错误。关闭自动重写后，单节点继续使用已安装的独立环境；第二次 smoke 已验证实际 worker 启动。`check` 还检查 TensorDict 0.10.0，并在模型加载前执行真实 `DataProto.to_tensordict()` 转换，避免旧版依赖通过元数据解析却在 rollout 后失败。
 
 ## 两条评测与一步训练
 

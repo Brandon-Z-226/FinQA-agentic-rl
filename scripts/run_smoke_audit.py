@@ -54,7 +54,7 @@ def main():
         (root / name).write_bytes(subprocess.check_output(command))
     shutil.copytree(project / "configs", root / "configs")
     shutil.copy2(project / "environments/cuda/uv.lock", root / "cuda-uv.lock")
-    versions = {p: importlib.metadata.version(p) for p in ["rllm", "rllm-model-gateway", "verl", "vllm", "torch", "flash-attn", "numpy", "transformers", "peft", "ray"]}
+    versions = {p: importlib.metadata.version(p) for p in ["rllm", "rllm-model-gateway", "verl", "vllm", "torch", "flash-attn", "numpy", "transformers", "peft", "ray", "tensordict"]}
     (root / "versions.json").write_text(json.dumps(versions, indent=2) + "\n")
     check = subprocess.run(["uv", "pip", "check", "--python", str(Path(os.environ["FINQA_GPU_ROOT"]) / "venv/bin/python")], capture_output=True, text=True)
     (root / "pip-check.log").write_text(check.stdout + check.stderr)

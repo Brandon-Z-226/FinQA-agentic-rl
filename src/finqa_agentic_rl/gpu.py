@@ -69,10 +69,17 @@ def check_runtime() -> dict:
     import vllm  # noqa: F401
     from flash_attn import flash_attn_func
 
-    expected = {"torch": "2.11.0", "vllm": "0.22.1", "verl": "0.8.0", "flash-attn": "2.8.3"}
+    expected = {"torch": "2.11.0", "vllm": "0.22.1", "verl": "0.8.0", "flash-attn": "2.8.3", "tensordict": "0.10.0"}
     versions = {name: importlib.metadata.version(name) for name in expected}
     if any(versions[name].split("+")[0] != version for name, version in expected.items()):
         raise RuntimeError(f"Unexpected CUDA dependency versions: {versions}")
+    # Exercise the actual conversion before paying for model/rollout startup.
+    from verl import DataProto
+
+    probe = torch.tensor([[1, 2]], dtype=torch.int64)
+    converted = DataProto.from_dict(tensors={"input_ids": probe}).to_tensordict()
+    if not torch.equal(converted["input_ids"], probe):
+        raise RuntimeError("DataProto to TensorDict conversion failed")
     if torch.cuda.device_count() != 1 or not torch.cuda.is_bf16_supported():
         raise RuntimeError("Expose exactly one BF16-capable GPU via CUDA_VISIBLE_DEVICES.")
     properties = torch.cuda.get_device_properties(0)

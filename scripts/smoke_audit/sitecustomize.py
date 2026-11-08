@@ -113,6 +113,21 @@ def patch_backend(module):
             except Exception as exc:
                 emit("phase_error", phase=name, error_type=type(exc).__name__)
                 raise
+            if name == "generate_episodes":
+                # Persist before backend conversion can fail; do not wait for advantages.
+                records = []
+                for e in result:
+                    steps = [s for t in e.trajectories for s in t.steps]
+                    record = {
+                        "id": e.id,
+                        "is_correct": e.is_correct,
+                        "termination": str(e.termination_reason),
+                        "rewards": [t.reward for t in e.trajectories],
+                        "steps": [{"prompt_ids": s.prompt_ids, "response_ids": s.response_ids, "logprobs": s.logprobs} for s in steps],
+                    }
+                    records.append(record)
+                (Path(ROOT) / f"rollouts-{os.getpid()}-{time.time_ns()}.json").write_text(json.dumps(records, default=str) + "\n")
+                emit("rollouts_saved", count=len(records), steps=sum(len(r["steps"]) for r in records))
             if name == "compute_advantages":
                 state = args[0] if args else kwargs["trainer_state"]
                 groups = []
@@ -152,7 +167,7 @@ def patch_http(module):
 
     @functools.wraps(original)
     def send(self, request, *args, **kwargs):
-        endpoint = os.environ.get("FINQA_JUDGE_BASE_URL", "").rstrip("/")
+        endpoint = (os.environ.get("FINQA_SMOKE_JUDGE_ENDPOINT") or os.environ.get("FINQA_JUDGE_BASE_URL", "")).rstrip("/")
         judge = bool(endpoint) and str(request.url) == endpoint + "/chat/completions" and request.method == "POST"
         start = time.time()
         if judge:
@@ -174,6 +189,7 @@ def patch_http(module):
         return response
 
     module.Client.send = send
+    emit("hook_installed", target="httpx.Client.send", judge_endpoint_configured=bool(os.environ.get("FINQA_SMOKE_JUDGE_ENDPOINT") or os.environ.get("FINQA_JUDGE_BASE_URL")))
 
 
 def patch_ray_env(module):
@@ -185,6 +201,16 @@ def patch_ray_env(module):
         # Only diagnostics paths; never copy credentials into runtime-env logs.
         result["env_vars"]["FINQA_SMOKE_AUDIT_DIR"] = ROOT
         result["env_vars"]["PYTHONPATH"] = os.environ["PYTHONPATH"]
+        # Ray may reconstruct evaluator globals while omitting FINQA_* from the
+        # worker environment. Forward only the public endpoint for the counter.
+        from urllib.parse import urlsplit, urlunsplit
+
+        endpoint = os.environ.get("FINQA_JUDGE_BASE_URL", "")
+        if endpoint:
+            parsed = urlsplit(endpoint)
+            if parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError("Judge audit endpoint must not contain embedded credentials or query parameters")
+            result["env_vars"]["FINQA_SMOKE_JUDGE_ENDPOINT"] = urlunsplit(parsed)
         return result
 
     module.get_ppo_ray_runtime_env = environment
