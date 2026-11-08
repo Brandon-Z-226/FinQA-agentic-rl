@@ -179,8 +179,10 @@ def patch_backend(module):
     emit("hook_installed", target="VerlBackend")
 
 
-def patch_http(module):
-    original = module.Client.send
+def patch_openai_transport(module):
+    """Count each real sync OpenAI transport send after SDK retry expansion."""
+    cls = module.SyncAPIClient
+    original = cls._send_request
 
     @functools.wraps(original)
     def send(self, request, *args, **kwargs):
@@ -202,17 +204,11 @@ def patch_http(module):
                 emit("judge_http_error", error_type=type(exc).__name__, seconds=time.time() - start)
             raise
         if judge:
-            # The configured judge uses non-streaming chat completions.
-            response.read()
-            try:
-                body = response.json()
-            except ValueError:
-                body = {}
-            emit("judge_http_response", status=response.status_code, seconds=time.time() - start, model=body.get("model"), usage=body.get("usage"))
+            emit("judge_http_response", status=response.status_code, seconds=time.time() - start)
         return response
 
-    module.Client.send = send
-    emit("hook_installed", target="httpx.Client.send", judge_endpoint_configured=bool(os.environ.get("FINQA_SMOKE_JUDGE_ENDPOINT") or os.environ.get("FINQA_JUDGE_BASE_URL")))
+    cls._send_request = send
+    emit("hook_installed", target="openai.SyncAPIClient._send_request", judge_endpoint_configured=bool(os.environ.get("FINQA_SMOKE_JUDGE_ENDPOINT") or os.environ.get("FINQA_JUDGE_BASE_URL")))
 
 
 def patch_openai_chat(module):
@@ -266,7 +262,7 @@ def patch_ray_env(module):
 PATCHERS = {
     "verl.workers.engine.fsdp.transformer_impl": patch_fsdp,
     "rllm.trainer.verl.verl_backend": patch_backend,
-    "httpx._client": patch_http,
+    "openai._base_client": patch_openai_transport,
     "openai.resources.chat.completions.completions": patch_openai_chat,
     "rllm.trainer.verl.ray_runtime_env": patch_ray_env,
 }

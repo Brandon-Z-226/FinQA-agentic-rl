@@ -55,24 +55,29 @@ def test_four_step_optimizer_cap(audit, monkeypatch):
 
 @pytest.mark.parametrize("endpoint_var", ["FINQA_JUDGE_BASE_URL", "FINQA_SMOKE_JUDGE_ENDPOINT"])
 def test_judge_usage_without_credentials(audit, monkeypatch, endpoint_var):
-    import httpx._client
+    import httpx
 
     monkeypatch.delenv("FINQA_JUDGE_BASE_URL", raising=False)
     monkeypatch.delenv("FINQA_SMOKE_JUDGE_ENDPOINT", raising=False)
     monkeypatch.setenv(endpoint_var, "https://judge.invalid/v1")
-    original = httpx.Client.send
-    monkeypatch.setattr(httpx.Client, "send", original)
-    audit.patch_http(httpx._client)
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"model": "judge", "usage": {"total_tokens": 42}}))
-    with httpx.Client(transport=transport) as client:
-        response = client.post(
-            "https://judge.invalid/v1/chat/completions?api-version=current",
-            headers={"Authorization": "Bearer DO_NOT_RECORD"},
-            json={"messages": [{"content": "PRIVATE_PROMPT"}]},
-        )
-        assert response.json()["usage"]["total_tokens"] == 42
+
+    class Client:
+        def _send_request(self, request, *args, **kwargs):
+            assert request.headers["Authorization"] == "Bearer DO_NOT_RECORD"
+            return httpx.Response(200, json={"model": "judge", "usage": {"total_tokens": 42}})
+
+    audit.patch_openai_transport(SimpleNamespace(SyncAPIClient=Client))
+    request = httpx.Request(
+        "POST",
+        "https://judge.invalid/v1/chat/completions?api-version=current",
+        headers={"Authorization": "Bearer DO_NOT_RECORD"},
+        json={"messages": [{"content": "PRIVATE_PROMPT"}]},
+    )
+    response = Client()._send_request(request)
+    assert response.json()["usage"]["total_tokens"] == 42
     recorded = "".join(p.read_text() for p in Path(audit.ROOT).glob("events-*.jsonl"))
-    assert '"total_tokens": 42' in recorded
+    assert '"judge_http_attempt"' in recorded
+    assert '"status": 200' in recorded
     assert "DO_NOT_RECORD" not in recorded
     assert "PRIVATE_PROMPT" not in recorded
 
