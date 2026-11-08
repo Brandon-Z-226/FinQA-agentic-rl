@@ -2,6 +2,8 @@
 
 这是独立的 Linux x86_64 / Python 3.11 uv 环境，与根目录的 macOS `.venv` 分离。2026-11-07 已在 AutoDL A800 上安装并锁定依赖，通过 GPU 算子、LoRA 参数、数据/配置检查与两条真实 Agent 推理；**尚未执行训练或 Optimizer Step**。`uv pip check` 仍有固定 verl/vLLM 组合的 NumPy 元数据冲突，不能称为完整依赖验收通过。实测版本、网络方案、日志和限制见 [AutoDL 部署记录](../../docs/deployment-autodl.md)。根项目锁文件不能代替 CUDA lock。
 
+随后在用户授权下进行的首次 GRPO smoke 在 Ray/uv 环境处理阶段失败，实际 Optimizer Step=0；失败后已修复启动开关但没有自动重跑，详见 [首次 smoke 报告](../../docs/smoke-autodl-2026-11-07.md)。用户已接受当前 NumPy 元数据例外，`pip check` 仍保留非零结果。
+
 ## 机器与 CUDA 版本
 
 原租机截图为 A800 80GB × 1、14 核 CPU、120GB RAM、驱动 580.65.06、30GB 系统盘和 50GB 数据盘；实际服务器为驱动 590.48.01、CUDA Toolkit 13.0.88、90 GiB 数据盘。LoRA、CPU offload 和有限 rollout 并发是本配置的起点，训练峰值显存和速度必须通过 smoke 测量。4B 全量训练并非理论上绝对不可能，但不能只按 BF16 权重约 8GB 计算，还要包含梯度、Adam 状态、激活、vLLM 和权重同步峰值。
@@ -45,6 +47,8 @@ $FINQA_GPU_ROOT/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507/snapshots/c
 `check` 导入实际 CUDA 栈，检查包版本、单卡可见性、BF16 和显存容量，执行小型 CUDA 矩阵运算与 FlashAttention 前向/反向。安装、下载后至少要保留 24GiB 空间，训练入口再次检查。该阈值用于尽早发现容量不足，不能保证整个 epoch 不会写满。
 
 `lora-check` 在 meta device 构建同一架构并应用 PEFT，不分配完整权重，确认可训练参数只有 LoRA 且比例低于 5%。这验证参数选择；真正 FSDP worker 是否启用 LoRA，需由训练和 checkpoint 验证。
+
+脚本显式设置 `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`：固定 rLLM 的 `working_dir=None` 会触发 Ray 2.60.0 自动 uv hook 的路径类型错误。关闭自动重写后，单节点继续使用已安装的独立环境；函数级检查通过，尚未通过第二次 smoke 验证 worker 启动。
 
 ## 两条评测与一步训练
 

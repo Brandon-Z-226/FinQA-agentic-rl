@@ -40,6 +40,9 @@ export MAX_JOBS="${MAX_JOBS:-4}"
 export FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export TOKENIZERS_PARALLELISM=false
+# Use this already-locked environment on the single node. Ray's automatic
+# uv-run hook rejects rLLM's explicit working_dir=None (Ray 2.60.0).
+export RAY_ENABLE_UV_RUN_RUNTIME_ENV=0
 mkdir -p "$TMPDIR"
 if [[ "$ACTION" == setup ]]; then
     for program in python3 git g++ make nvcc nvidia-smi; do

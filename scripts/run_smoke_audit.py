@@ -9,10 +9,34 @@ import subprocess
 import time
 from pathlib import Path
 
-import psutil
+
+def cgroup_memory(root=Path("/sys/fs/cgroup")):
+    """Read v2 or v1; historical cgroup peaks are not per-run peaks."""
+    if (root / "memory.current").exists():
+        stats = dict(line.split() for line in (root / "memory.stat").read_text().splitlines())
+        return {
+            "cgroup_version": 2,
+            "container_usage_bytes": int((root / "memory.current").read_text()),
+            "anon_bytes": int(stats.get("anon", 0)),
+            "file_cache_bytes": int(stats.get("file", 0)),
+            "oom_counters": (root / "memory.events").read_text(),
+        }
+    root = root / "memory"
+    if (root / "memory.usage_in_bytes").exists():
+        stats = dict(line.split() for line in (root / "memory.stat").read_text().splitlines())
+        return {
+            "cgroup_version": 1,
+            "container_usage_bytes": int((root / "memory.usage_in_bytes").read_text()),
+            "anon_bytes": int(stats.get("total_rss", stats.get("rss", 0))),
+            "file_cache_bytes": int(stats.get("total_cache", stats.get("cache", 0))),
+            "oom_counters": (root / "memory.failcnt").read_text(),
+        }
+    return {"cgroup_version": None}
 
 
 def main():
+    import psutil
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
@@ -55,9 +79,7 @@ def main():
         "ray_tmpdir": env["RAY_TMPDIR"],
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    cgroup = Path("/sys/fs/cgroup")
-    before_oom = (cgroup / "memory.events").read_text() if (cgroup / "memory.events").exists() else ""
-    (root / "memory-events-before.txt").write_text(before_oom)
+    (root / "memory-before.json").write_text(json.dumps(cgroup_memory(), indent=2) + "\n")
     timed_out = False
     with (root / "console.log").open("w") as console, (root / "resources.jsonl").open("w") as resources:
         process = subprocess.Popen(command, env=env, stdout=console, stderr=subprocess.STDOUT, start_new_session=True)
@@ -68,14 +90,7 @@ def main():
             gpu = subprocess.run(["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu,power.draw", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=10)
             if gpu.returncode == 0:
                 row["gpu"] = gpu.stdout.strip()
-            for name in ("memory.current", "memory.peak"):
-                path = cgroup / name
-                if path.exists():
-                    row[name] = int(path.read_text())
-            if (cgroup / "memory.stat").exists():
-                memory = dict(line.split() for line in (cgroup / "memory.stat").read_text().splitlines())
-                row["anon_bytes"] = int(memory.get("anon", 0))
-                row["file_cache_bytes"] = int(memory.get("file", 0))
+            row.update(cgroup_memory())
             try:
                 children = psutil.Process(process.pid).children(recursive=True)
                 row["process_rss_sum_bytes"] = sum(p.memory_info().rss for p in children if p.is_running())
@@ -110,8 +125,7 @@ def main():
     returncode = process.wait(timeout=15)
     result = {"returncode": returncode, "timed_out": timed_out, "wall_seconds": time.time() - start, "cleanup": cleanup}
     (root / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    if (cgroup / "memory.events").exists():
-        (root / "memory-events-after.txt").write_text((cgroup / "memory.events").read_text())
+    (root / "memory-after.json").write_text(json.dumps(cgroup_memory(), indent=2) + "\n")
     print(json.dumps(result, indent=2))
 
 

@@ -120,3 +120,11 @@ API usage 合计输入 4,305、输出 1,200、总计 5,505 token，包括首次�
 实际发现并修正 uv 构建依赖写法、FlashAttention 多架构构建开销和 NumPy 缺少上界的问题。**`uv pip check` 仍有 verl 的 NumPy <2 与固定 vLLM 栈所需 NumPy 2 的一项元数据冲突，setup 返回非零，不能报告依赖全通过。** 保留 rLLM 上游 override，尚未为此升级核心框架。安装过程、差异、运行结果与后续条件详见 [AutoDL 部署记录](deployment-autodl.md)。
 
 本地回归再次 **68 passed**（14.45 秒），Ruff lint/format 通过。未执行 GRPO、首次 Optimizer Step、checkpoint 保存/恢复或完整 epoch；用户仍需明确授权首次训练步骤。
+
+## 2026-11-07：首次授权的 GRPO Smoke Test
+
+部署保存为 `2457729`，加入单次监测与更新上限保护后，以 `159ecaa` 在 AutoDL 启动唯一一次现有 smoke 命令，核心 YAML 与 CUDA lock 不变。用户接受 NumPy 2.3.5 的已知元数据例外。45.407 秒后在 Ray 2.60.0 的 uv runtime hook 处理 `working_dir=None` 时失败；未进入真实 FSDP worker 初始化，rollout/judge/optimizer 均为 0，没有 checkpoint。没有自动重试或启动 Baseline。
+
+保存完整日志、Git/依赖/配置快照和资源采样。显存最大采样值为 preflight 的 537 MiB，进程 RSS 总和约 1.46 GiB；初版监测未覆盖 cgroup v1，不能报告完整容器内存峰值。按 ¥5.59/小时，本次作业窗口约 ¥0.0705，不含其他开机时间。
+
+失败后增加 `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`，实际调用原报错函数验证通过，没有启动集群或重试训练；另修正 cgroup v1/v2 监测。首次运行前 70 项离线测试通过。详情与验收边界见 [首次 smoke 报告](smoke-autodl-2026-11-07.md)。

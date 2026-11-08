@@ -61,3 +61,22 @@ def test_judge_usage_without_credentials(audit, monkeypatch):
     assert '"total_tokens": 42' in recorded
     assert "DO_NOT_RECORD" not in recorded
     assert "PRIVATE_PROMPT" not in recorded
+
+
+def test_cgroup_v1_and_v2_memory(tmp_path):
+    path = Path(__file__).resolve().parents[1] / "scripts/run_smoke_audit.py"
+    spec = importlib.util.spec_from_file_location("run_smoke_audit_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    v1 = tmp_path / "memory"
+    v1.mkdir()
+    (v1 / "memory.usage_in_bytes").write_text("300")
+    (v1 / "memory.stat").write_text("total_rss 100\ntotal_cache 200\n")
+    (v1 / "memory.failcnt").write_text("0")
+    assert module.cgroup_memory(tmp_path)["anon_bytes"] == 100
+    assert module.cgroup_memory(tmp_path)["cgroup_version"] == 1
+    (tmp_path / "memory.current").write_text("400")
+    (tmp_path / "memory.stat").write_text("anon 150\nfile 250\n")
+    (tmp_path / "memory.events").write_text("oom 0\noom_kill 0\n")
+    assert module.cgroup_memory(tmp_path)["anon_bytes"] == 150
+    assert module.cgroup_memory(tmp_path)["cgroup_version"] == 2
