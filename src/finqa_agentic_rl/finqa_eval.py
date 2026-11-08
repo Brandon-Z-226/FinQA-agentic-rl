@@ -219,25 +219,35 @@ def _call_judge(system_prompt: str, user_prompt: str, *, multi_table: bool) -> t
         request["reasoning"] = {"effort": "low"}
         request["text"] = {"verbosity": "low"}
 
-    out = _request_judge_text(request)
-
-    if multi_table:
+    for response_attempt in range(1, JUDGE_MAX_ATTEMPTS + 1):
+        out = _request_judge_text(request)
         try:
-            parsed = json.loads(out)
-        except json.JSONDecodeError as exc:
-            raise JudgeResponseError("Judge returned invalid multi-table JSON") from exc
-        scores = {k: parsed.get(k) for k in CORRECTNESS_WEIGHTS}
-        if any(not isinstance(v, int | float) or not 0 <= float(v) <= 100 for v in scores.values()):
-            raise JudgeResponseError("Judge multi-table rubric is incomplete or out of range")
-        score = sum((float(scores[k]) / 100.0) * w for k, w in CORRECTNESS_WEIGHTS.items()) / sum(CORRECTNESS_WEIGHTS.values())
-        return score, parsed
+            if multi_table:
+                parsed = json.loads(out)
+                scores = {k: parsed.get(k) for k in CORRECTNESS_WEIGHTS}
+                if any(not isinstance(v, int | float) or not 0 <= float(v) <= 100 for v in scores.values()):
+                    raise JudgeResponseError("Judge multi-table rubric is incomplete or out of range")
+                score = sum((float(scores[k]) / 100.0) * w for k, w in CORRECTNESS_WEIGHTS.items()) / sum(CORRECTNESS_WEIGHTS.values())
+                return score, parsed
 
-    text = out.lower()
-    has_true = "true" in text
-    has_false = "false" in text
-    if has_true == has_false:
-        raise JudgeResponseError("Judge single-table verdict must contain exactly one of true/false")
-    return has_true, {}
+            # The official prompt requests: {True/False, 'Reason'}. Parse that
+            # leading verdict before inspecting explanation text, which may
+            # legitimately contain the opposite word (for example "not true").
+            leading = re.match(r"\s*[\{\[\(]?\s*(true|false)\b", out, flags=re.IGNORECASE)
+            if leading:
+                return leading.group(1).lower() == "true", {}
+            verdicts = {value.lower() for value in re.findall(r"\b(true|false)\b", out, flags=re.IGNORECASE)}
+            if len(verdicts) == 1:
+                return verdicts.pop() == "true", {}
+            raise JudgeResponseError("Judge single-table verdict is ambiguous or missing")
+        except (json.JSONDecodeError, JudgeResponseError) as exc:
+            error = exc if isinstance(exc, JudgeResponseError) else JudgeResponseError("Judge returned invalid multi-table JSON")
+            if response_attempt == JUDGE_MAX_ATTEMPTS:
+                if error is exc:
+                    raise
+                raise error from exc
+            time.sleep(JUDGE_RETRY_BASE_SECONDS * 2 ** (response_attempt - 1))
+    raise AssertionError("unreachable")
 
 
 def _task_meta(task: Task | dict) -> dict:

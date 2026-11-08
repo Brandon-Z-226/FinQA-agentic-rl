@@ -88,11 +88,38 @@ def test_chat_multi_table_accepts_complete_json_fence(monkeypatch, fence):
 
 @pytest.mark.parametrize("content", ["```json\nnot JSON\n```", 'Explanation first\n```json\n{"primary_data_score": 100}\n```'])
 def test_chat_multi_table_does_not_salvage_invalid_or_embedded_json(monkeypatch, content):
-    endpoint = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))]))
+    calls = 0
+
+    def create(**kwargs):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    endpoint = SimpleNamespace(create=create)
     monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
+    monkeypatch.setattr(evaluator, "JUDGE_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(evaluator, "JUDGE_RETRY_BASE_SECONDS", 0)
     monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=endpoint)))
     with pytest.raises(evaluator.JudgeResponseError):
         evaluator._call_judge("system", "input", multi_table=True)
+    assert calls == 3
+
+
+def test_single_table_leading_verdict_ignores_explanation_words(monkeypatch):
+    endpoint = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{False, 'The response is not true'}"))]))
+    monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
+    monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=endpoint)))
+    assert evaluator._call_judge("system", "input", multi_table=False) == (False, {})
+
+
+def test_malformed_judge_response_retries_then_succeeds(monkeypatch):
+    responses = iter(["unclear", "{True, 'matches'}"])
+    endpoint = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=next(responses)))]))
+    monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
+    monkeypatch.setattr(evaluator, "JUDGE_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(evaluator, "JUDGE_RETRY_BASE_SECONDS", 0)
+    monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=endpoint)))
+    assert evaluator._call_judge("system", "input", multi_table=False) == (True, {})
 
 
 def test_judge_api_failure_retries_then_raises(monkeypatch):
