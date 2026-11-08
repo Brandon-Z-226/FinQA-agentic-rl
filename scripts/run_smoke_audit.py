@@ -1,4 +1,4 @@
-"""Run the existing smoke command ONCE, recording resources and bounded diagnostics."""
+"""Run one bounded GPU experiment, recording resources and diagnostics."""
 
 import argparse
 import importlib.metadata
@@ -40,7 +40,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
+    parser.add_argument("--action", choices=["smoke", "baseline-small"], default="smoke")
+    parser.add_argument("--max-optimizer-steps", type=int, default=1)
+    parser.add_argument("--hydra-override", action="append", default=[])
     args = parser.parse_args()
+    if args.max_optimizer_steps < 0:
+        parser.error("--max-optimizer-steps must be non-negative")
     root = args.run_dir.resolve()
     root.mkdir(parents=True, exist_ok=False)
     audit = root / "audit"
@@ -63,8 +68,9 @@ def main():
     env["PYTHONPATH"] = str(project / "scripts/smoke_audit") + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     env["PYTHONUNBUFFERED"] = "1"
     env["HYDRA_FULL_ERROR"] = "1"
+    env["FINQA_MAX_OPTIMIZER_STEPS"] = str(args.max_optimizer_steps)
     env["RAY_TMPDIR"] = "/tmp/finqa-smoke-" + str(os.getpid())
-    command = ["bash", "scripts/gpu.sh", "smoke"]
+    command = ["bash", "scripts/gpu.sh", args.action, *args.hydra_override]
     start = time.time()
     manifest = {
         "start_unix": start,
@@ -73,7 +79,7 @@ def main():
         "git_commit": (root / "git-head.txt").read_text().strip(),
         "pip_check_returncode": check.returncode,
         "accepted_exception": "verl 0.8.0 NumPy <2 metadata versus pinned rLLM/vLLM NumPy 2.3.5",
-        "max_optimizer_steps": 1,
+        "max_optimizer_steps": args.max_optimizer_steps,
         "attempts": 1,
         "timeout_seconds": args.timeout_seconds,
         "ray_tmpdir": env["RAY_TMPDIR"],

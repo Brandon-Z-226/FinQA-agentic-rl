@@ -86,7 +86,8 @@ def main() -> None:
     os.environ["FINQA_MODEL_PATH"] = str(CACHE / "dry-run/model")
     sync = load_sync_config()
     reports = []
-    for profile in ("a800_80gb", "a800_smoke"):
+    expected_steps = {"a800_80gb": None, "a800_smoke": 1, "a800_baseline_4step": 4}
+    for profile, total_steps in expected_steps.items():
         search = f"hydra.searchpath=[pkg://rllm.trainer.config,file://{args.verl_config_dir.resolve()}]"
         with initialize_config_dir(config_dir=str(ROOT / "configs"), version_base=None):
             config = compose(config_name=profile, overrides=[search])
@@ -97,7 +98,12 @@ def main() -> None:
         assert config.rllm.rollout.train.temperature == config.actor_rollout_ref.rollout.temperature == 0.6
         assert config.rllm.trainer.total_epochs == config.trainer.total_epochs == 1
         assert config.rllm.algorithm.eps_clip_high == config.actor_rollout_ref.actor.clip_ratio_high == 0.28
-        assert config.trainer.total_training_steps == (1 if profile == "a800_smoke" else None)
+        assert config.trainer.total_training_steps == total_steps
+        if profile == "a800_baseline_4step":
+            assert config.rllm.data.train_batch_size == 16
+            assert config.rllm.trainer.total_batches == 4
+            assert config.finqa.train_sample_size == 64
+            assert config.finqa.val_sample_size == 32
         assert config.rllm.data.val_batch_size == config.data.val_batch_size
         OmegaConf.save(config, CACHE / f"{profile}.resolved.yaml", resolve=True)
         reports.append(

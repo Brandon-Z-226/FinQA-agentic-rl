@@ -86,13 +86,11 @@ def test_dispatch_errors_and_table_tracking():
     assert accessed == ["mytable"]
 
 
-def test_missing_judge_key_returns_zero_without_table_bonus(monkeypatch):
+def test_missing_judge_key_stops_reward_generation(monkeypatch):
     monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", None)
     episode = Episode(artifacts={"answer": "FINAL ANSWER: 5", "accessed_tables": ["t"]})
-    result = evaluator.finqa_evaluator({"question": "2+3?", "ground_truth": "5", "table_name": ["t"]}, episode)
-    assert result.reward == 0
-    assert not result.is_correct
-    assert {s.name: s.value for s in result.signals} == {"accuracy": 0, "table_access": 1}
+    with pytest.raises(evaluator.JudgeUnavailableError):
+        evaluator.finqa_evaluator({"question": "2+3?", "ground_truth": "5", "table_name": ["t"]}, episode)
 
 
 @pytest.mark.parametrize("multi", [False, True])

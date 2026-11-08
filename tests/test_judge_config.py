@@ -2,6 +2,8 @@ import importlib
 import json
 from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
 
 evaluator = importlib.import_module("finqa_agentic_rl.finqa_eval")
@@ -27,7 +29,7 @@ def test_custom_endpoint_never_inherits_unrelated_openai_key(judge_env, custom_k
     judge_env.setattr(evaluator.openai, "OpenAI", lambda **kwargs: calls.append(kwargs))
     importlib.reload(evaluator)
     assert evaluator.JUDGE_MODEL == evaluator.MULTI_TABLE_JUDGE_MODEL == "custom-judge"
-    assert calls == ([{"api_key": custom_key, "base_url": "https://judge.invalid/v1"}] if custom_key else [])
+    assert calls == ([{"api_key": custom_key, "max_retries": 0, "base_url": "https://judge.invalid/v1"}] if custom_key else [])
 
 
 def test_original_openai_configuration_still_works(judge_env):
@@ -35,7 +37,7 @@ def test_original_openai_configuration_still_works(judge_env):
     judge_env.setenv("OPENAI_API_KEY", "test-original-key")
     judge_env.setattr(evaluator.openai, "OpenAI", lambda **kwargs: calls.append(kwargs))
     importlib.reload(evaluator)
-    assert calls == [{"api_key": "test-original-key"}]
+    assert calls == [{"api_key": "test-original-key", "max_retries": 0}]
     assert evaluator.JUDGE_MODEL == "gpt-5-nano"
     assert evaluator.MULTI_TABLE_JUDGE_MODEL == "gpt-5-mini"
     assert evaluator.JUDGE_API_STYLE == "responses"
@@ -89,7 +91,41 @@ def test_chat_multi_table_does_not_salvage_invalid_or_embedded_json(monkeypatch,
     endpoint = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))]))
     monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
     monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=endpoint)))
-    assert evaluator._call_judge("system", "input", multi_table=True) == (0.0, {})
+    with pytest.raises(evaluator.JudgeResponseError):
+        evaluator._call_judge("system", "input", multi_table=True)
+
+
+def test_judge_api_failure_retries_then_raises(monkeypatch):
+    calls = 0
+
+    def create(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise openai.APIConnectionError(request=httpx.Request("POST", "https://judge.invalid/v1/chat/completions"))
+
+    monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
+    monkeypatch.setattr(evaluator, "JUDGE_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(evaluator, "JUDGE_RETRY_BASE_SECONDS", 0)
+    monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    with pytest.raises(evaluator.JudgeAPIError, match="after 3 attempt"):
+        evaluator._call_judge("system", "input", multi_table=False)
+    assert calls == 3
+
+
+def test_non_retryable_judge_error_is_exposed_immediately(monkeypatch):
+    calls = 0
+
+    def create(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise ValueError("bad request construction")
+
+    monkeypatch.setattr(evaluator, "JUDGE_API_STYLE", "chat_completions")
+    monkeypatch.setattr(evaluator, "JUDGE_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    with pytest.raises(evaluator.JudgeAPIError, match="after 1 attempt"):
+        evaluator._call_judge("system", "input", multi_table=False)
+    assert calls == 1
 
 
 @pytest.mark.parametrize("style", ["responses", "chat_completions"])

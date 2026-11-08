@@ -1,0 +1,26 @@
+defaults:
+  - rllm: base
+  - rllm/backend: verl
+  - a800_common
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://rllm.trainer.config
+    - pkg://verl.trainer.config
+
+trainer:
+  experiment_name: qwen3-4b-a800-baseline64
+  total_training_steps: 4
+  save_freq: 4
+  test_freq: 100
+  val_before_train: true
+rllm:
+  trainer:
+    total_batches: 4
+finqa:
+  train_sample_size: 64
+  train_sample_seed: 20261109
+  val_sample_size: 32
+  val_sample_seed: 20261110
+  expected_checkpoint_step: 4

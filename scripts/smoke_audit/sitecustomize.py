@@ -13,6 +13,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = os.environ.get("FINQA_SMOKE_AUDIT_DIR")
 
@@ -24,10 +25,17 @@ def emit(event, **data):
 
 
 def claim_optimizer_step():
-    """A shared exclusive file prevents a second update across worker restarts."""
-    fd = os.open(str(Path(ROOT) / "optimizer-step.claim"), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    with os.fdopen(fd, "w") as out:
-        out.write(str(os.getpid()))
+    """Shared exclusive files enforce the configured cap across restarts."""
+    maximum = int(os.environ.get("FINQA_MAX_OPTIMIZER_STEPS", "1"))
+    for step_index in range(1, maximum + 1):
+        try:
+            fd = os.open(str(Path(ROOT) / f"optimizer-step-{step_index}.claim"), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w") as out:
+            out.write(str(os.getpid()))
+        return step_index
+    raise RuntimeError(f"Optimizer step limit reached ({maximum})")
 
 
 def patch_fsdp(module):
@@ -36,7 +44,7 @@ def patch_fsdp(module):
 
     @functools.wraps(original)
     def checked(self, *args, **kwargs):
-        claim_optimizer_step()
+        step_index = claim_optimizer_step()
         import torch
 
         params = [(n, p) for n, p in self.module.named_parameters() if p.requires_grad]
@@ -54,10 +62,16 @@ def patch_fsdp(module):
             digest.update(n.encode())
             digest.update(p.contiguous().numpy().tobytes())
         emit(
-            "optimizer_before", trainable_numel=sum(p.numel() for _, p in params), tensors=len(params), gradients_finite=grad_finite, tensors_with_nonzero_grad=grad_nonzero, sha256=digest.hexdigest()
+            "optimizer_before",
+            step_index=step_index,
+            trainable_numel=sum(p.numel() for _, p in params),
+            tensors=len(params),
+            gradients_finite=grad_finite,
+            tensors_with_nonzero_grad=grad_nonzero,
+            sha256=digest.hexdigest(),
         )
-        pre = self.optimizer.register_step_pre_hook(lambda *a: emit("optimizer_step_called"))
-        post = self.optimizer.register_step_post_hook(lambda *a: emit("optimizer_step_returned"))
+        pre = self.optimizer.register_step_pre_hook(lambda *a: emit("optimizer_step_called", step_index=step_index))
+        post = self.optimizer.register_step_post_hook(lambda *a: emit("optimizer_step_returned", step_index=step_index))
         try:
             result = original(self, *args, **kwargs)
         finally:
@@ -74,6 +88,7 @@ def patch_fsdp(module):
             digest.update(after.contiguous().numpy().tobytes())
         emit(
             "optimizer_after",
+            step_index=step_index,
             grad_norm=result,
             changed_tensors=changed,
             max_abs_delta=max_delta,
@@ -107,7 +122,8 @@ def patch_backend(module):
     def wrap(name, original):
         @functools.wraps(original)
         async def observed(self, *args, **kwargs):
-            emit("phase_start", phase=name)
+            is_validation = bool(kwargs.get("is_validation", False)) if name == "generate_episodes" else None
+            emit("phase_start", phase=name, is_validation=is_validation)
             try:
                 result = await original(self, *args, **kwargs)
             except Exception as exc:
@@ -126,8 +142,9 @@ def patch_backend(module):
                         "steps": [{"prompt_ids": s.prompt_ids, "response_ids": s.response_ids, "logprobs": s.logprobs} for s in steps],
                     }
                     records.append(record)
-                (Path(ROOT) / f"rollouts-{os.getpid()}-{time.time_ns()}.json").write_text(json.dumps(records, default=str) + "\n")
-                emit("rollouts_saved", count=len(records), steps=sum(len(r["steps"]) for r in records))
+                payload = {"is_validation": is_validation, "episodes": records}
+                (Path(ROOT) / f"rollouts-{os.getpid()}-{time.time_ns()}.json").write_text(json.dumps(payload, default=str) + "\n")
+                emit("rollouts_saved", count=len(records), steps=sum(len(r["steps"]) for r in records), is_validation=is_validation)
             if name == "compute_advantages":
                 state = args[0] if args else kwargs["trainer_state"]
                 groups = []
@@ -152,7 +169,7 @@ def patch_backend(module):
             if name == "update_policy":
                 state = args[0] if args else kwargs["trainer_state"]
                 emit("policy_update_metrics", metrics=state.metrics)
-            emit("phase_end", phase=name)
+            emit("phase_end", phase=name, is_validation=is_validation)
             return result
 
         return observed
@@ -168,7 +185,13 @@ def patch_http(module):
     @functools.wraps(original)
     def send(self, request, *args, **kwargs):
         endpoint = (os.environ.get("FINQA_SMOKE_JUDGE_ENDPOINT") or os.environ.get("FINQA_JUDGE_BASE_URL", "")).rstrip("/")
-        judge = bool(endpoint) and str(request.url) == endpoint + "/chat/completions" and request.method == "POST"
+        configured = urlsplit(endpoint)
+        actual = urlsplit(str(request.url))
+        judge = (
+            bool(endpoint)
+            and request.method == "POST"
+            and (actual.scheme, actual.netloc, actual.path.rstrip("/")) == (configured.scheme, configured.netloc, configured.path.rstrip("/") + "/chat/completions")
+        )
         start = time.time()
         if judge:
             emit("judge_http_attempt")

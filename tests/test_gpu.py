@@ -27,6 +27,17 @@ def test_lora_and_smoke_profile(gpu_config):
     assert smoke.rllm.trainer.test_freq == -1
     assert smoke.rllm.trainer.total_batches == 1
     assert smoke.rllm.rollout.n == 4
+    baseline = OmegaConf.merge(gpu_config, OmegaConf.load(ROOT / "configs/a800_baseline_4step.yaml"))
+    validate_training_config(baseline)
+    assert baseline.data.train_batch_size == 16
+    assert baseline.actor_rollout_ref.actor.ppo_mini_batch_size == 64
+    assert baseline.rllm.rollout.n == 4
+    assert baseline.actor_rollout_ref.model.lora_rank == 32
+    assert baseline.actor_rollout_ref.actor.optim.lr == 1e-6
+    assert baseline.rllm.trainer.total_batches == 4
+    assert baseline.finqa.train_sample_size == 64
+    assert baseline.finqa.val_sample_size == 32
+    assert baseline.trainer.val_before_train is True
 
 
 @pytest.mark.parametrize(

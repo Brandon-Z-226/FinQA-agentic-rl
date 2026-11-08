@@ -36,7 +36,7 @@ def test_one_optimizer_call_and_parameter_change(audit, monkeypatch):
     engine.module.lora_A.sum().backward()
     engine.optimizer_step()
     after = engine.module.lora_A.detach().clone()
-    with pytest.raises(FileExistsError):
+    with pytest.raises(RuntimeError, match="limit reached"):
         engine.optimizer_step()
     assert torch.equal(engine.module.lora_A, after)
     events = [json.loads(line) for p in Path(audit.ROOT).glob("events-*.jsonl") for line in p.read_text().splitlines()]
@@ -44,6 +44,13 @@ def test_one_optimizer_call_and_parameter_change(audit, monkeypatch):
     update = next(e for e in events if e["event"] == "optimizer_after")
     assert update["changed_tensors"] == 1
     assert update["max_abs_delta"] > 0
+
+
+def test_four_step_optimizer_cap(audit, monkeypatch):
+    monkeypatch.setenv("FINQA_MAX_OPTIMIZER_STEPS", "4")
+    assert [audit.claim_optimizer_step() for _ in range(4)] == [1, 2, 3, 4]
+    with pytest.raises(RuntimeError, match=r"limit reached \(4\)"):
+        audit.claim_optimizer_step()
 
 
 @pytest.mark.parametrize("endpoint_var", ["FINQA_JUDGE_BASE_URL", "FINQA_SMOKE_JUDGE_ENDPOINT"])
@@ -58,7 +65,11 @@ def test_judge_usage_without_credentials(audit, monkeypatch, endpoint_var):
     audit.patch_http(httpx._client)
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"model": "judge", "usage": {"total_tokens": 42}}))
     with httpx.Client(transport=transport) as client:
-        response = client.post("https://judge.invalid/v1/chat/completions", headers={"Authorization": "Bearer DO_NOT_RECORD"}, json={"messages": [{"content": "PRIVATE_PROMPT"}]})
+        response = client.post(
+            "https://judge.invalid/v1/chat/completions?api-version=current",
+            headers={"Authorization": "Bearer DO_NOT_RECORD"},
+            json={"messages": [{"content": "PRIVATE_PROMPT"}]},
+        )
         assert response.json()["usage"]["total_tokens"] == 42
     recorded = "".join(p.read_text() for p in Path(audit.ROOT).glob("events-*.jsonl"))
     assert '"total_tokens": 42' in recorded
@@ -111,7 +122,8 @@ def test_rollouts_saved_before_backend_conversion_failure(audit):
     with pytest.raises(AssertionError):
         asyncio.run(backend.process_backend_batch())
     saved = json.loads(next(Path(audit.ROOT).glob("rollouts-*.json")).read_text())
-    assert saved[0]["steps"] == [{"prompt_ids": [1, 2], "response_ids": [3], "logprobs": [-0.5]}]
+    assert saved["is_validation"] is False
+    assert saved["episodes"][0]["steps"] == [{"prompt_ids": [1, 2], "response_ids": [3], "logprobs": [-0.5]}]
 
 
 def test_ray_audit_forwards_only_public_endpoint(audit, monkeypatch):

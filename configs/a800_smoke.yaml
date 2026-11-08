@@ -26,3 +26,4 @@ rllm:
 finqa:
   train_limit: 2
   val_limit: 2
+  expected_checkpoint_step: 1

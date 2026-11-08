@@ -44,6 +44,15 @@ def validate_training_config(config: DictConfig) -> None:
         limit = get(f"finqa.{split}_limit")
         if limit is not None and (not isinstance(limit, int) or limit < get(f"data.{split}_batch_size")):
             raise ValueError(f"finqa.{split}_limit must cover a full {split} batch.")
+        sample_size = get(f"finqa.{split}_sample_size")
+        sample_seed = get(f"finqa.{split}_sample_seed")
+        if limit is not None and sample_size is not None:
+            raise ValueError(f"Use either finqa.{split}_limit or finqa.{split}_sample_size, not both.")
+        if sample_size is not None:
+            if not isinstance(sample_size, int) or sample_size < get(f"data.{split}_batch_size"):
+                raise ValueError(f"finqa.{split}_sample_size must cover a full {split} batch.")
+            if not isinstance(sample_seed, int):
+                raise ValueError(f"finqa.{split}_sample_seed must be an integer.")
 
 
 def require_judge() -> None:
@@ -146,7 +155,7 @@ def run(command: list[str]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["download", "prepare", "check", "lora-check", "config", "smoke", "train", "serve", "eval"])
+    parser.add_argument("action", choices=["download", "prepare", "check", "lora-check", "config", "smoke", "baseline-small", "train", "serve", "eval"])
     args, extra = parser.parse_known_args()
     project = Path(os.environ.get("FINQA_PROJECT_ROOT", str(Path(__file__).resolve().parents[2])))
     root = Path(os.environ["FINQA_GPU_ROOT"])
@@ -179,8 +188,8 @@ def main() -> None:
             report = check_lora(path)
         (artifacts / f"{args.action}.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))
-    elif args.action in {"config", "smoke", "train"}:
-        profile = "a800_smoke" if args.action == "smoke" else "a800_80gb"
+    elif args.action in {"config", "smoke", "baseline-small", "train"}:
+        profile = {"smoke": "a800_smoke", "baseline-small": "a800_baseline_4step"}.get(args.action, "a800_80gb")
         command = [sys.executable, "-m", "finqa_agentic_rl.train", "--config-path", str(project / "configs"), "--config-name", profile]
         if args.action == "config":
             os.environ["FINQA_SKIP_PRELOAD"] = "1"

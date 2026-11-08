@@ -10,7 +10,7 @@ into a self-contained module so the cookbook does not depend on
 
 Judge connection and model overrides use ``FINQA_JUDGE_*`` variables.
 Without overrides, the original OpenAI Responses configuration is retained.
-Missing credentials or failed calls still produce ``reward=0``.
+Judge transport/configuration failures raise instead of becoming a false reward.
 """
 
 from __future__ import annotations
@@ -18,7 +18,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 
+import httpx
 import openai
 import rllm
 from rllm.eval.types import EvalOutput, Signal
@@ -44,8 +46,31 @@ JUDGE_MODEL = os.environ.get("FINQA_JUDGE_MODEL") or "gpt-5-nano"
 MULTI_TABLE_JUDGE_MODEL = os.environ.get("FINQA_JUDGE_MULTI_TABLE_MODEL") or os.environ.get("FINQA_JUDGE_MODEL") or "gpt-5-mini"
 JUDGE_API_STYLE = os.environ.get("FINQA_JUDGE_API_STYLE") or "responses"
 JUDGE_REASONING_EFFORT = os.environ.get("FINQA_JUDGE_REASONING_EFFORT") or None
+JUDGE_MAX_ATTEMPTS = int(os.environ.get("FINQA_JUDGE_MAX_ATTEMPTS", "3"))
+JUDGE_RETRY_BASE_SECONDS = float(os.environ.get("FINQA_JUDGE_RETRY_BASE_SECONDS", "1"))
 if JUDGE_API_STYLE not in {"responses", "chat_completions"}:
     raise ValueError("FINQA_JUDGE_API_STYLE must be responses or chat_completions")
+if not 1 <= JUDGE_MAX_ATTEMPTS <= 5:
+    raise ValueError("FINQA_JUDGE_MAX_ATTEMPTS must be between 1 and 5")
+if not 0 <= JUDGE_RETRY_BASE_SECONDS <= 30:
+    raise ValueError("FINQA_JUDGE_RETRY_BASE_SECONDS must be between 0 and 30")
+
+
+class JudgeError(RuntimeError):
+    """A judge failure that must never be converted into a training reward."""
+
+
+class JudgeUnavailableError(JudgeError):
+    """Judge credentials or client configuration are unavailable."""
+
+
+class JudgeAPIError(JudgeError):
+    """The judge API failed after the configured finite retry policy."""
+
+
+class JudgeResponseError(JudgeError):
+    """The judge returned a response that cannot be scored safely."""
+
 
 CORRECTNESS_WEIGHTS = {
     "primary_data_score": 0.30,
@@ -65,20 +90,17 @@ def _make_judge_client():
     """Build the judge client without changing the agent's gateway connection."""
     if not OPENAI_API_KEY:
         return None
-    try:
-        kwargs = {"api_key": OPENAI_API_KEY}
-        if JUDGE_BASE_URL:
-            kwargs["base_url"] = JUDGE_BASE_URL
-        return openai.OpenAI(**kwargs)
-    except Exception:
-        return None
+    kwargs = {"api_key": OPENAI_API_KEY, "max_retries": 0}
+    if JUDGE_BASE_URL:
+        kwargs["base_url"] = JUDGE_BASE_URL
+    return openai.OpenAI(**kwargs)
 
 
 _JUDGE_CLIENT = _make_judge_client()
 
 
-def _request_judge_text(request: dict) -> str:
-    """Adapt the transport only; prompts and score parsing remain upstream's."""
+def _request_judge_text_once(request: dict) -> str:
+    """Send exactly one SDK request; retries are owned by this module."""
     if JUDGE_API_STYLE == "responses":
         if JUDGE_REASONING_EFFORT:
             request = {**request, "reasoning": {**request.get("reasoning", {}), "effort": JUDGE_REASONING_EFFORT}}
@@ -108,6 +130,29 @@ def _request_judge_text(request: dict) -> str:
         if fenced:
             out = fenced.group(1)
     return out
+
+
+def _retryable_judge_error(exc: Exception) -> bool:
+    if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError, httpx.TransportError, TimeoutError, ConnectionError)):
+        return True
+    if isinstance(exc, openai.APIStatusError):
+        return exc.status_code in {408, 409, 429} or exc.status_code >= 500
+    return False
+
+
+def _request_judge_text(request: dict) -> str:
+    """Call the judge with finite retries and expose the final failure."""
+    if _JUDGE_CLIENT is None:
+        raise JudgeUnavailableError("Judge API credentials are not configured")
+    for attempt in range(1, JUDGE_MAX_ATTEMPTS + 1):
+        try:
+            return _request_judge_text_once(request)
+        except Exception as exc:
+            retryable = _retryable_judge_error(exc)
+            if not retryable or attempt == JUDGE_MAX_ATTEMPTS:
+                raise JudgeAPIError(f"Judge API failed after {attempt} attempt(s): {type(exc).__name__}") from exc
+            time.sleep(JUDGE_RETRY_BASE_SECONDS * 2 ** (attempt - 1))
+    raise AssertionError("unreachable")
 
 
 def _extract_final_answer(action: str, *, prefer_tail: bool = False) -> str:
@@ -144,14 +189,9 @@ def _table_access_score(accessed: list[str], expected: str | list[str]) -> float
 def _call_judge(system_prompt: str, user_prompt: str, *, multi_table: bool) -> tuple[bool | float, dict]:
     """Score ``user_prompt`` against ``system_prompt`` via the judge LLM.
 
-    Returns ``(decision, raw_rubric)``. ``decision`` is ``bool`` for
-    single-table (true/false judge) and ``float in [0, 1]`` for the
-    multi-table weighted rubric. Falls back to ``False``/``0.0`` if the
-    judge client is unavailable.
+    Returns ``(decision, raw_rubric)``. Judge failures and malformed responses
+    raise so the trainer cannot consume them as negative rewards.
     """
-    if _JUDGE_CLIENT is None:
-        return (0.0 if multi_table else False), {}
-
     request: dict = {
         "model": MULTI_TABLE_JUDGE_MODEL if multi_table else JUDGE_MODEL,
         "instructions": system_prompt,
@@ -179,27 +219,25 @@ def _call_judge(system_prompt: str, user_prompt: str, *, multi_table: bool) -> t
         request["reasoning"] = {"effort": "low"}
         request["text"] = {"verbosity": "low"}
 
-    try:
-        out = _request_judge_text(request)
+    out = _request_judge_text(request)
 
-        if multi_table:
-            try:
-                parsed = json.loads(out)
-            except json.JSONDecodeError:
-                parsed = {}
-            weighted, total = 0.0, 0.0
-            for k, w in CORRECTNESS_WEIGHTS.items():
-                v = parsed.get(k)
-                if isinstance(v, int | float):
-                    weighted += (float(v) / 100.0) * w
-                    total += w
-            score = max(0.0, min(1.0, weighted / total if total > 0 else 0.0))
-            return score, parsed
+    if multi_table:
+        try:
+            parsed = json.loads(out)
+        except json.JSONDecodeError as exc:
+            raise JudgeResponseError("Judge returned invalid multi-table JSON") from exc
+        scores = {k: parsed.get(k) for k in CORRECTNESS_WEIGHTS}
+        if any(not isinstance(v, int | float) or not 0 <= float(v) <= 100 for v in scores.values()):
+            raise JudgeResponseError("Judge multi-table rubric is incomplete or out of range")
+        score = sum((float(scores[k]) / 100.0) * w for k, w in CORRECTNESS_WEIGHTS.items()) / sum(CORRECTNESS_WEIGHTS.values())
+        return score, parsed
 
-        text = out.lower()
-        return (("true" in text) and ("false" not in text)), {}
-    except Exception:
-        return (0.0 if multi_table else False), {}
+    text = out.lower()
+    has_true = "true" in text
+    has_false = "false" in text
+    if has_true == has_false:
+        raise JudgeResponseError("Judge single-table verdict must contain exactly one of true/false")
+    return has_true, {}
 
 
 def _task_meta(task: Task | dict) -> dict:
