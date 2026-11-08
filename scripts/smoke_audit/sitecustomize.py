@@ -192,6 +192,30 @@ def patch_http(module):
     emit("hook_installed", target="httpx.Client.send", judge_endpoint_configured=bool(os.environ.get("FINQA_SMOKE_JUDGE_ENDPOINT") or os.environ.get("FINQA_JUDGE_BASE_URL")))
 
 
+def patch_openai_chat(module):
+    """Record logical judge usage above HTTP retries without logging prompts."""
+    cls = module.Completions
+    original = cls.create
+
+    @functools.wraps(original)
+    def create(self, *args, **kwargs):
+        start = time.time()
+        emit("judge_sdk_attempt")
+        try:
+            response = original(self, *args, **kwargs)
+        except Exception as exc:
+            emit("judge_sdk_error", error_type=type(exc).__name__, seconds=time.time() - start)
+            raise
+        usage = getattr(response, "usage", None)
+        if hasattr(usage, "model_dump"):
+            usage = usage.model_dump()
+        emit("judge_sdk_response", seconds=time.time() - start, model=getattr(response, "model", None), usage=usage)
+        return response
+
+    cls.create = create
+    emit("hook_installed", target="openai.Completions.create")
+
+
 def patch_ray_env(module):
     original = module.get_ppo_ray_runtime_env
 
@@ -220,6 +244,7 @@ PATCHERS = {
     "verl.workers.engine.fsdp.transformer_impl": patch_fsdp,
     "rllm.trainer.verl.verl_backend": patch_backend,
     "httpx._client": patch_http,
+    "openai.resources.chat.completions.completions": patch_openai_chat,
     "rllm.trainer.verl.ray_runtime_env": patch_ray_env,
 }
 

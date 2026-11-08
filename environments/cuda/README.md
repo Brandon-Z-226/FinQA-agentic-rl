@@ -6,6 +6,8 @@
 
 2026-11-09 再次获授权后，真实 FSDP LoRA 加载及 8 条 rollout 成功，随后因 TensorDict 0.8.3 不满足 verl 的转换接口要求而停止，Optimizer Step 仍为 0。失败后已固定 TensorDict 0.10.0、更新 CUDA lock，并通过实际 CPU 转换检查；没有再次启动训练。显存最大采样 56.69 GiB，尚未覆盖 backward。详见 [第二次 smoke 报告](../../docs/smoke-autodl-2026-11-09.md)。
 
+同日后续授权的 smoke 已完成完整单步：token/logprob 对齐、零优势计算、backward、一次 optimizer 调用、权重同步和约 18 GiB checkpoint 保存均成功。零优势导致 loss/grad/权重变化为 0；显存最高采样 58.62 GiB，无 OOM。完整一轮前需处理 smoke checkpoint 的磁盘占用，并先用小规模 Baseline 验证正式 batch 资源和 judge usage 监测。详见 [成功 smoke 报告](../../docs/smoke-autodl-2026-11-09-success.md)。
+
 ## 机器与 CUDA 版本
 
 原租机截图为 A800 80GB × 1、14 核 CPU、120GB RAM、驱动 580.65.06、30GB 系统盘和 50GB 数据盘；实际服务器为驱动 590.48.01、CUDA Toolkit 13.0.88、90 GiB 数据盘。LoRA、CPU offload 和有限 rollout 并发是本配置的起点，训练峰值显存和速度必须通过 smoke 测量。4B 全量训练并非理论上绝对不可能，但不能只按 BF16 权重约 8GB 计算，还要包含梯度、Adam 状态、激活、vLLM 和权重同步峰值。

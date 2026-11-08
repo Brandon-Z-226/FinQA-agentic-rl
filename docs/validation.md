@@ -136,3 +136,9 @@ API usage 合计输入 4,305、输出 1,200、总计 5,505 token，包括首次�
 总耗时 208.983 秒，rollout 31.166 秒，GPU 最大采样 58,048 MiB（56.69 GiB），容器内存最高 44.41 GiB，未发生 OOM；结束 GPU 0 MiB。按 ¥5.59/小时，本次作业窗口约 ¥0.3245。原 judge 计数器漏记：实际有 8 次完成的逻辑评估，HTTP 尝试次数及 token 用量未知；token/logprob 审计保存点过晚，本次对齐证据未取得。
 
 失败后固定 TensorDict 0.10.0、更新独立 CUDA lock，并在真实安装环境用 CPU 验证张量和 uid 转换通过；核心框架、NumPy 及实验 YAML 不变，pip check 的唯一 NumPy 元数据例外原样保留。修正后续审计保存点和公开 judge endpoint 传递，未重启训练。本地 **74 passed**（13.83 秒），Ruff lint/format、shell/Git 检查、真实 Hydra 与固定 rLLM 配置同步通过。详见 [第二次 smoke 报告](smoke-autodl-2026-11-09.md)，完整单步仍未验收。
+
+## 2026-11-09：单步 GRPO 闭环成功
+
+以 `a64ad1a`、TensorDict 0.10.0 和原 `a800_smoke.yaml` 完成一次真实 smoke，返回码 0，总墙钟 271.554 秒。8/8 rollout 正常、response token 与 rollout logprob 在全部 33 个 Agent step 上长度一致；两组 reward 均为 1，实际 advantage、loss、grad norm 均为 0。真实 FSDP backward 后 optimizer 被调用并正常返回一次，66,060,288 个 LoRA 参数的梯度有限；零优势导致没有非零梯度或权重变化，符合预期。
+
+`global_step_1` checkpoint 保存并通过 rank/alpha=32 元数据检查，约 18 GiB。GPU 显存最高采样 58.62 GiB、容器内存最高 63.20 GiB，无 OOM；完成后 GPU 0 MiB、无 Ray/训练残留。按 ¥5.59/小时，本次作业窗口约 ¥0.4217。训练闭环具备进入小规模 Baseline 的条件，完整一轮前需处理 smoke checkpoint 占用，并在下一阶段验证修正后的 judge SDK usage 监测。完整证据和 30–50 小时的初步全量成本范围见 [成功 smoke 报告](smoke-autodl-2026-11-09-success.md)。

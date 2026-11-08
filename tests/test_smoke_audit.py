@@ -66,6 +66,24 @@ def test_judge_usage_without_credentials(audit, monkeypatch, endpoint_var):
     assert "PRIVATE_PROMPT" not in recorded
 
 
+def test_judge_sdk_usage_without_prompts(audit):
+    class Usage:
+        def model_dump(self):
+            return {"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42}
+
+    class Completions:
+        def create(self, **kwargs):
+            assert kwargs["messages"][0]["content"] == "PRIVATE_PROMPT"
+            return SimpleNamespace(model="judge", usage=Usage())
+
+    audit.patch_openai_chat(SimpleNamespace(Completions=Completions))
+    response = Completions().create(model="judge", messages=[{"content": "PRIVATE_PROMPT"}])
+    assert response.usage.model_dump()["total_tokens"] == 42
+    recorded = "".join(p.read_text() for p in Path(audit.ROOT).glob("events-*.jsonl"))
+    assert '"total_tokens": 42' in recorded
+    assert "PRIVATE_PROMPT" not in recorded
+
+
 def test_rollouts_saved_before_backend_conversion_failure(audit):
     import asyncio
 
