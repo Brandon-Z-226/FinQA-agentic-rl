@@ -167,6 +167,11 @@ def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
+def require_bounded_full_launcher(action: str, audit_dir: str | None) -> None:
+    if action == "baseline-full" and not audit_dir:
+        raise RuntimeError("baseline-full must be launched through scripts/run_smoke_audit.py so metrics and the final checkpoint hook are active")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["download", "prepare", "check", "lora-check", "config", "smoke", "baseline-small", "baseline-full", "train", "serve", "eval"])
@@ -203,8 +208,7 @@ def main() -> None:
         (artifacts / f"{args.action}.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))
     elif args.action in {"config", "smoke", "baseline-small", "baseline-full", "train"}:
-        if args.action == "baseline-full" and not os.environ.get("FINQA_SMOKE_AUDIT_DIR"):
-            parser.error("baseline-full must be launched through scripts/run_smoke_audit.py so metrics and the final checkpoint hook are active")
+        require_bounded_full_launcher(args.action, os.environ.get("FINQA_SMOKE_AUDIT_DIR"))
         profile = {
             "smoke": "a800_smoke",
             "baseline-small": "a800_baseline_4step",

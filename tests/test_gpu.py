@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
-from finqa_agentic_rl.gpu import model_path, require_disk, validate_training_config, verify_lora_checkpoint
+from finqa_agentic_rl.gpu import model_path, require_bounded_full_launcher, require_disk, validate_training_config, verify_lora_checkpoint
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,6 +91,13 @@ def test_disk_guard(tmp_path):
     assert require_disk(tmp_path, 0) >= 0
     with pytest.raises(RuntimeError, match="Expand the data disk"):
         require_disk(tmp_path, 10**12)
+
+
+def test_full_training_requires_bounded_audit_launcher():
+    require_bounded_full_launcher("baseline-small", None)
+    require_bounded_full_launcher("baseline-full", "/audit")
+    with pytest.raises(RuntimeError, match="run_smoke_audit.py"):
+        require_bounded_full_launcher("baseline-full", None)
 
 
 def test_smoke_requires_real_lora_checkpoint_metadata(tmp_path):
