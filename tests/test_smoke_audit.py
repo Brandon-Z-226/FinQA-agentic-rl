@@ -107,6 +107,7 @@ def test_final_checkpoint_saved_only_after_expected_final_validation(audit):
     asyncio.run(backend.on_validation_end(state))
     assert saved == [(251, backend.actor_rollout_wg, "loader")]
     events = [json.loads(line) for p in Path(audit.ROOT).glob("events-*.jsonl") for line in p.read_text().splitlines()]
+    assert sum(event["event"] == "checkpoint_saved" for event in events) == 1
     assert sum(event["event"] == "final_checkpoint_saved" for event in events) == 1
 
 

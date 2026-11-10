@@ -104,6 +104,27 @@ def patch_fsdp(module):
 
 def patch_backend(module):
     cls = module.VerlBackend
+    if hasattr(module, "save_checkpoint"):
+        original_save_checkpoint = module.save_checkpoint
+
+        @functools.wraps(original_save_checkpoint)
+        def observed_save_checkpoint(config, global_steps, actor_rollout_wg, train_dataloader=None):
+            path = Path(config.trainer.default_local_dir) / f"global_step_{global_steps}"
+            emit("checkpoint_start", step=global_steps, path=str(path))
+            try:
+                result = original_save_checkpoint(
+                    config,
+                    global_steps,
+                    actor_rollout_wg,
+                    train_dataloader=train_dataloader,
+                )
+            except Exception as exc:
+                emit("checkpoint_error", step=global_steps, error_type=type(exc).__name__)
+                raise
+            emit("checkpoint_saved", step=global_steps, path=str(path))
+            return result
+
+        module.save_checkpoint = observed_save_checkpoint
     original_init = cls.__init__
 
     @functools.wraps(original_init)
