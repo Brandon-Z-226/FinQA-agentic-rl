@@ -97,6 +97,7 @@ def main() -> None:
     os.environ["FINQA_MODEL_PATH"] = str(CACHE / "dry-run/model")
     sync = load_sync_config()
     check_validation_schedule_source()
+    CACHE.mkdir(parents=True, exist_ok=True)
     reports = []
     expected_steps = {"a800_80gb": None, "a800_smoke": 1, "a800_baseline_4step": 4, "a800_baseline_full": 251}
     for profile, total_steps in expected_steps.items():
