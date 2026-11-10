@@ -38,6 +38,25 @@ def test_lora_and_smoke_profile(gpu_config):
     assert baseline.finqa.train_sample_size == 64
     assert baseline.finqa.val_sample_size == 32
     assert baseline.trainer.val_before_train is True
+    full = OmegaConf.merge(gpu_config, OmegaConf.load(ROOT / "configs/a800_baseline_full.yaml"))
+    validate_training_config(full)
+    assert full.data.train_batch_size == 16
+    assert full.rllm.rollout.n == 4
+    assert full.actor_rollout_ref.model.lora_rank == 32
+    assert full.actor_rollout_ref.actor.optim.lr == 1e-6
+    assert full.rllm.trainer.total_batches == 251
+    assert full.trainer.val_before_train is True
+    assert full.trainer.test_freq == 1000
+    assert full.trainer.save_freq == 25
+    assert full.trainer.max_actor_ckpt_to_keep == 2
+    assert full.trainer.resume_mode == "disable"
+    assert full.finqa.expected_train_size == 4030
+    assert full.finqa.expected_val_size == 522
+    assert full.finqa.save_final_checkpoint is True
+    recovery = OmegaConf.create(OmegaConf.to_container(full, resolve=False))
+    recovery.trainer.resume_mode = "auto"
+    recovery.finqa.require_empty_checkpoint_dir = False
+    validate_training_config(recovery)
 
 
 @pytest.mark.parametrize(

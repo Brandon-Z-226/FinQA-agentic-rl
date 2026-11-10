@@ -53,6 +53,20 @@ def validate_training_config(config: DictConfig) -> None:
                 raise ValueError(f"finqa.{split}_sample_size must cover a full {split} batch.")
             if not isinstance(sample_seed, int):
                 raise ValueError(f"finqa.{split}_sample_seed must be an integer.")
+    if get("finqa.save_final_checkpoint"):
+        final_step = get("finqa.expected_checkpoint_step")
+        if not isinstance(final_step, int) or final_step <= 0:
+            raise ValueError("finqa.expected_checkpoint_step must be positive when final checkpoint saving is enabled.")
+        if get("rllm.trainer.total_batches") != final_step or get("trainer.total_training_steps") != final_step:
+            raise ValueError("Final checkpoint step must match both configured training-step limits.")
+        if get("trainer.test_freq") <= final_step:
+            raise ValueError("Final checkpoint saving requires a positive test_freq above the total steps for one final validation only.")
+        fresh = bool(get("finqa.require_empty_checkpoint_dir"))
+        resume_mode = get("trainer.resume_mode")
+        if fresh and resume_mode != "disable":
+            raise ValueError("A fresh full baseline requires resume_mode=disable.")
+        if not fresh and resume_mode != "auto":
+            raise ValueError("A full-baseline recovery requires resume_mode=auto.")
 
 
 def require_judge() -> None:
@@ -155,7 +169,7 @@ def run(command: list[str]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["download", "prepare", "check", "lora-check", "config", "smoke", "baseline-small", "train", "serve", "eval"])
+    parser.add_argument("action", choices=["download", "prepare", "check", "lora-check", "config", "smoke", "baseline-small", "baseline-full", "train", "serve", "eval"])
     args, extra = parser.parse_known_args()
     project = Path(os.environ.get("FINQA_PROJECT_ROOT", str(Path(__file__).resolve().parents[2])))
     root = Path(os.environ["FINQA_GPU_ROOT"])
@@ -188,8 +202,14 @@ def main() -> None:
             report = check_lora(path)
         (artifacts / f"{args.action}.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))
-    elif args.action in {"config", "smoke", "baseline-small", "train"}:
-        profile = {"smoke": "a800_smoke", "baseline-small": "a800_baseline_4step"}.get(args.action, "a800_80gb")
+    elif args.action in {"config", "smoke", "baseline-small", "baseline-full", "train"}:
+        if args.action == "baseline-full" and not os.environ.get("FINQA_SMOKE_AUDIT_DIR"):
+            parser.error("baseline-full must be launched through scripts/run_smoke_audit.py so metrics and the final checkpoint hook are active")
+        profile = {
+            "smoke": "a800_smoke",
+            "baseline-small": "a800_baseline_4step",
+            "baseline-full": "a800_baseline_full",
+        }.get(args.action, "a800_80gb")
         command = [sys.executable, "-m", "finqa_agentic_rl.train", "--config-path", str(project / "configs"), "--config-name", profile]
         if args.action == "config":
             os.environ["FINQA_SKIP_PRELOAD"] = "1"

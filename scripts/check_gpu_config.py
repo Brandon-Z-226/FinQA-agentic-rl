@@ -72,6 +72,17 @@ def load_sync_config():
     return namespace["sync_config"]
 
 
+def check_validation_schedule_source() -> None:
+    spec = importlib.util.find_spec("rllm")
+    rllm = Path(next(iter(spec.submodule_search_locations)))
+    source = (rllm / "trainer/unified_trainer.py").read_text()
+    periodic = "trainer_state.global_step % self.rllm_config.trainer.test_freq == 0"
+    final = "if self.rllm_config.trainer.test_freq > 0:\n            await self._validate_async(trainer_state)"
+    full_validation = "StatefulTaskDataLoader(self.val_dataset, batch_size=val_batch_size, shuffle=False, drop_last=False)"
+    if periodic not in source or final not in source or full_validation not in source:
+        raise RuntimeError("Pinned rLLM validation scheduling changed; re-audit pre/periodic/final validation behavior.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fetch", action="store_true")
@@ -85,8 +96,9 @@ def main() -> None:
     os.environ["FINQA_GPU_ROOT"] = str(CACHE / "dry-run")
     os.environ["FINQA_MODEL_PATH"] = str(CACHE / "dry-run/model")
     sync = load_sync_config()
+    check_validation_schedule_source()
     reports = []
-    expected_steps = {"a800_80gb": None, "a800_smoke": 1, "a800_baseline_4step": 4}
+    expected_steps = {"a800_80gb": None, "a800_smoke": 1, "a800_baseline_4step": 4, "a800_baseline_full": 251}
     for profile, total_steps in expected_steps.items():
         search = f"hydra.searchpath=[pkg://rllm.trainer.config,file://{args.verl_config_dir.resolve()}]"
         with initialize_config_dir(config_dir=str(ROOT / "configs"), version_base=None):
@@ -104,6 +116,17 @@ def main() -> None:
             assert config.rllm.trainer.total_batches == 4
             assert config.finqa.train_sample_size == 64
             assert config.finqa.val_sample_size == 32
+        if profile == "a800_baseline_full":
+            assert config.rllm.data.train_batch_size == 16
+            assert config.rllm.trainer.total_batches == 251
+            assert config.rllm.trainer.val_before_train is True
+            assert config.rllm.trainer.test_freq == 1000
+            assert config.rllm.trainer.save_freq == 25
+            assert config.trainer.max_actor_ckpt_to_keep == 2
+            assert config.trainer.resume_mode == "disable"
+            assert config.finqa.expected_train_size == 4030
+            assert config.finqa.expected_val_size == 522
+            assert config.finqa.save_final_checkpoint is True
         assert config.rllm.data.val_batch_size == config.data.val_batch_size
         OmegaConf.save(config, CACHE / f"{profile}.resolved.yaml", resolve=True)
         reports.append(
@@ -116,7 +139,17 @@ def main() -> None:
                 "total_training_steps": config.trainer.total_training_steps,
             }
         )
-    print(json.dumps({"hydra_and_pinned_sync_config": "passed", "profiles": reports, "GPU_execution": "not tested"}, indent=2))
+    print(
+        json.dumps(
+            {
+                "hydra_and_pinned_sync_config": "passed",
+                "pinned_validation_schedule": "pre-validation when enabled; periodic modulo test_freq; final validation when test_freq > 0",
+                "profiles": reports,
+                "GPU_execution": "not tested",
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

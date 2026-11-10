@@ -7,11 +7,12 @@ ACTION="${1:-help}"
 if [[ "$ACTION" == help || "$ACTION" == --help ]]; then
     cat <<'USAGE'
 Usage: FINQA_GPU_ROOT=/root/autodl-tmp/finqa bash scripts/gpu.sh COMMAND [args]
-Commands: setup, download, prepare, check, lora-check, config, smoke, baseline-small, train, serve, eval
+Commands: setup, download, prepare, check, lora-check, config, smoke, baseline-small, baseline-full, train, serve, eval
 Choose a CUDA 13.0 devel / Linux x86_64 image with nvcc and uv installed.
 setup installs only the independent uv GPU environment. No job starts automatically.
 config composes Hydra without starting training; smoke runs one optimizer step;
 baseline-small is the fixed-seed 64-question, four-step experiment.
+baseline-full is the full-split, 251-step baseline; launch it through run_smoke_audit.py only after final authorization.
 USAGE
     exit 0
 fi

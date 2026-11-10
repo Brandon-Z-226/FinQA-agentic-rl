@@ -35,17 +35,26 @@ def cgroup_memory(root=Path("/sys/fs/cgroup")):
 
 
 def main():
-    import psutil
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
-    parser.add_argument("--action", choices=["smoke", "baseline-small"], default="smoke")
+    parser.add_argument("--action", choices=["smoke", "baseline-small", "baseline-full"], default="smoke")
     parser.add_argument("--max-optimizer-steps", type=int, default=1)
+    parser.add_argument("--gpu-hourly-price", type=float, default=5.59)
+    parser.add_argument("--judge-input-price-per-million", type=float)
+    parser.add_argument("--judge-output-price-per-million", type=float)
     parser.add_argument("--hydra-override", action="append", default=[])
     args = parser.parse_args()
     if args.max_optimizer_steps < 0:
         parser.error("--max-optimizer-steps must be non-negative")
+    if args.gpu_hourly_price < 0:
+        parser.error("--gpu-hourly-price must be non-negative")
+    if (args.judge_input_price_per_million is None) != (args.judge_output_price_per_million is None):
+        parser.error("Provide both judge input and output prices, or neither")
+    if args.action == "baseline-full" and args.max_optimizer_steps != 251:
+        parser.error("baseline-full requires --max-optimizer-steps 251")
+    import psutil
+
     root = args.run_dir.resolve()
     root.mkdir(parents=True, exist_ok=False)
     audit = root / "audit"
@@ -83,6 +92,11 @@ def main():
         "attempts": 1,
         "timeout_seconds": args.timeout_seconds,
         "ray_tmpdir": env["RAY_TMPDIR"],
+        "pricing_cny": {
+            "gpu_per_hour": args.gpu_hourly_price,
+            "judge_input_per_million_tokens": args.judge_input_price_per_million,
+            "judge_output_per_million_tokens": args.judge_output_price_per_million,
+        },
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (root / "memory-before.json").write_text(json.dumps(cgroup_memory(), indent=2) + "\n")
@@ -129,7 +143,14 @@ def main():
         except psutil.Error:
             pass
     returncode = process.wait(timeout=15)
-    result = {"returncode": returncode, "timed_out": timed_out, "wall_seconds": time.time() - start, "cleanup": cleanup}
+    wall_seconds = time.time() - start
+    result = {
+        "returncode": returncode,
+        "timed_out": timed_out,
+        "wall_seconds": wall_seconds,
+        "gpu_window_cost_cny": wall_seconds / 3600 * args.gpu_hourly_price,
+        "cleanup": cleanup,
+    }
     (root / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     (root / "memory-after.json").write_text(json.dumps(cgroup_memory(), indent=2) + "\n")
     print(json.dumps(result, indent=2))

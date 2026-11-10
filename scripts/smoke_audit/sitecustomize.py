@@ -176,6 +176,37 @@ def patch_backend(module):
 
     for name in ("generate_episodes", "process_backend_batch", "compute_advantages", "update_policy", "on_batch_end", "on_policy_updated"):
         setattr(cls, name, wrap(name, getattr(cls, name)))
+
+    original_validation_end = cls.on_validation_end
+
+    @functools.wraps(original_validation_end)
+    async def validation_end(self, trainer_state, *args, **kwargs):
+        result = await original_validation_end(self, trainer_state, *args, **kwargs)
+        finqa = self.config.get("finqa", {})
+        expected = finqa.get("expected_checkpoint_step")
+        if finqa.get("save_final_checkpoint") and self.global_steps == expected:
+            checkpoint = Path(self.config.trainer.default_local_dir) / f"global_step_{expected}"
+            if checkpoint.exists():
+                raise RuntimeError(f"Refusing to overwrite unexpected final checkpoint: {checkpoint}")
+            emit("final_checkpoint_start", step=expected, path=str(checkpoint))
+            try:
+                module.save_checkpoint(
+                    self.config,
+                    expected,
+                    self.actor_rollout_wg,
+                    train_dataloader=trainer_state.train_dataloader,
+                )
+            except Exception as exc:
+                emit("final_checkpoint_error", step=expected, error_type=type(exc).__name__)
+                raise
+            metadata = checkpoint / "actor/lora_train_meta.json"
+            latest = Path(self.config.trainer.default_local_dir) / "latest_checkpointed_iteration.txt"
+            if not metadata.is_file() or not latest.is_file() or latest.read_text().strip() != str(expected):
+                raise RuntimeError(f"Final checkpoint metadata is incomplete: {checkpoint}")
+            emit("final_checkpoint_saved", step=expected, path=str(checkpoint))
+        return result
+
+    cls.on_validation_end = validation_end
     emit("hook_installed", target="VerlBackend")
 
 

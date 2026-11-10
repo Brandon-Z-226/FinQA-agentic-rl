@@ -12,6 +12,7 @@ Usage (from this project root, after selecting a training environment)::
 """
 
 import random
+from pathlib import Path
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -31,6 +32,19 @@ def _fixed_sample(dataset, size: int | None, seed: int | None, split: str):
         raise ValueError(f"finqa.{split}_sample_seed must be an integer")
     indices = random.Random(seed).sample(range(len(dataset)), size)
     return dataset.select(indices), indices
+
+
+def _validate_dataset_size(dataset, expected: int | None, split: str) -> None:
+    if expected is not None and len(dataset) != expected:
+        raise RuntimeError(f"Expected {expected} FinQA {split} rows, found {len(dataset)}")
+
+
+def _require_empty_checkpoint_dir(config: DictConfig) -> None:
+    if not config.get("finqa", {}).get("require_empty_checkpoint_dir"):
+        return
+    checkpoint_dir = Path(config.trainer.default_local_dir)
+    if checkpoint_dir.exists() and any(checkpoint_dir.iterdir()):
+        raise RuntimeError(f"Fresh full baseline requires an empty checkpoint directory: {checkpoint_dir}")
 
 
 @hydra.main(config_path="pkg://rllm.trainer.config", config_name="unified", version_base=None)
@@ -53,6 +67,7 @@ def main(config: DictConfig):
         require_judge()
         check_model(Path(config.actor_rollout_ref.model.path))
         require_disk(Path(os.environ["FINQA_GPU_ROOT"]), config.finqa.min_free_disk_gib)
+        _require_empty_checkpoint_dir(config)
         report = check_runtime()
         output = Path(HydraConfig.get().runtime.output_dir)
         output.mkdir(parents=True, exist_ok=True)
@@ -69,6 +84,8 @@ def main(config: DictConfig):
         raise RuntimeError("FinQA dataset not found. Run: finqa-prepare")
 
     limits = config.get("finqa", {})
+    _validate_dataset_size(train_dataset, limits.get("expected_train_size"), "train")
+    _validate_dataset_size(val_dataset, limits.get("expected_val_size"), "val")
     if limits.get("train_limit") is not None and limits.get("train_sample_size") is not None:
         raise ValueError("Use either finqa.train_limit or finqa.train_sample_size, not both")
     if limits.get("val_limit") is not None and limits.get("val_sample_size") is not None:

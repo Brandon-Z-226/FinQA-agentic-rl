@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 from pathlib import Path
@@ -5,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 
 @pytest.fixture
@@ -51,6 +53,61 @@ def test_four_step_optimizer_cap(audit, monkeypatch):
     assert [audit.claim_optimizer_step() for _ in range(4)] == [1, 2, 3, 4]
     with pytest.raises(RuntimeError, match=r"limit reached \(4\)"):
         audit.claim_optimizer_step()
+
+
+def test_final_checkpoint_saved_only_after_expected_final_validation(audit):
+    saved = []
+
+    class Backend:
+        def __init__(self, config):
+            self.config = config
+            self.global_steps = 0
+            self.actor_rollout_wg = object()
+
+        async def generate_episodes(self):
+            return []
+
+        async def process_backend_batch(self):
+            pass
+
+        async def compute_advantages(self):
+            pass
+
+        async def update_policy(self):
+            pass
+
+        async def on_batch_end(self):
+            pass
+
+        async def on_policy_updated(self):
+            pass
+
+        async def on_validation_end(self, trainer_state):
+            pass
+
+    def save_checkpoint(config, step, actor_rollout_wg, train_dataloader=None):
+        saved.append((step, actor_rollout_wg, train_dataloader))
+        checkpoint = Path(config.trainer.default_local_dir) / f"global_step_{step}/actor"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "lora_train_meta.json").write_text("{}")
+        (Path(config.trainer.default_local_dir) / "latest_checkpointed_iteration.txt").write_text(str(step))
+
+    audit.patch_backend(SimpleNamespace(VerlBackend=Backend, save_checkpoint=save_checkpoint))
+    config = OmegaConf.create(
+        {
+            "trainer": {"default_local_dir": str(Path(audit.ROOT) / "checkpoints")},
+            "finqa": {"save_final_checkpoint": True, "expected_checkpoint_step": 251},
+        }
+    )
+    backend = Backend(config)
+    state = SimpleNamespace(train_dataloader="loader")
+    asyncio.run(backend.on_validation_end(state))
+    assert saved == []
+    backend.global_steps = 251
+    asyncio.run(backend.on_validation_end(state))
+    assert saved == [(251, backend.actor_rollout_wg, "loader")]
+    events = [json.loads(line) for p in Path(audit.ROOT).glob("events-*.jsonl") for line in p.read_text().splitlines()]
+    assert sum(event["event"] == "final_checkpoint_saved" for event in events) == 1
 
 
 @pytest.mark.parametrize("endpoint_var", ["FINQA_JUDGE_BASE_URL", "FINQA_SMOKE_JUDGE_ENDPOINT"])
@@ -101,8 +158,6 @@ def test_judge_sdk_usage_without_prompts(audit):
 
 
 def test_rollouts_saved_before_backend_conversion_failure(audit):
-    import asyncio
-
     step = SimpleNamespace(prompt_ids=[1, 2], response_ids=[3], logprobs=[-0.5])
     episode = SimpleNamespace(id="question:0", is_correct=True, termination_reason="ENV_DONE", trajectories=[SimpleNamespace(reward=1.0, steps=[step])])
 
@@ -117,6 +172,9 @@ def test_rollouts_saved_before_backend_conversion_failure(audit):
             raise AssertionError("conversion failed")
 
         async def compute_advantages(self):
+            pass
+
+        async def on_validation_end(self, trainer_state):
             pass
 
         update_policy = on_batch_end = on_policy_updated = compute_advantages
@@ -162,3 +220,23 @@ def test_cgroup_v1_and_v2_memory(tmp_path):
     (tmp_path / "memory.events").write_text("oom 0\noom_kill 0\n")
     assert module.cgroup_memory(tmp_path)["anon_bytes"] == 150
     assert module.cgroup_memory(tmp_path)["cgroup_version"] == 2
+
+
+def test_full_runner_requires_exact_optimizer_cap():
+    script = Path(__file__).resolve().parents[1] / "scripts/run_smoke_audit.py"
+    result = __import__("subprocess").run(
+        [
+            __import__("sys").executable,
+            str(script),
+            "--run-dir",
+            "/unused",
+            "--action",
+            "baseline-full",
+            "--max-optimizer-steps",
+            "250",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "requires --max-optimizer-steps 251" in result.stderr

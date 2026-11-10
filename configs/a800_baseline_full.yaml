@@ -1,0 +1,29 @@
+defaults:
+  - rllm: base
+  - rllm/backend: verl
+  - a800_common
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://rllm.trainer.config
+    - pkg://verl.trainer.config
+
+trainer:
+  experiment_name: qwen3-4b-a800-baseline-full
+  total_training_steps: 251
+  val_before_train: true
+  test_freq: 1000
+  save_freq: 25
+  max_actor_ckpt_to_keep: 2
+  resume_mode: disable
+rllm:
+  trainer:
+    total_batches: 251
+finqa:
+  expected_train_size: 4030
+  expected_val_size: 522
+  expected_checkpoint_step: 251
+  save_final_checkpoint: true
+  require_empty_checkpoint_dir: true
+  min_free_disk_gib: 65
