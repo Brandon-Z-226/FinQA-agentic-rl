@@ -46,10 +46,13 @@ JUDGE_MODEL = os.environ.get("FINQA_JUDGE_MODEL") or "gpt-5-nano"
 MULTI_TABLE_JUDGE_MODEL = os.environ.get("FINQA_JUDGE_MULTI_TABLE_MODEL") or os.environ.get("FINQA_JUDGE_MODEL") or "gpt-5-mini"
 JUDGE_API_STYLE = os.environ.get("FINQA_JUDGE_API_STYLE") or "responses"
 JUDGE_REASONING_EFFORT = os.environ.get("FINQA_JUDGE_REASONING_EFFORT") or None
+JUDGE_SINGLE_MAX_OUTPUT_TOKENS = int(os.environ.get("FINQA_JUDGE_SINGLE_MAX_OUTPUT_TOKENS", "512"))
 JUDGE_MAX_ATTEMPTS = int(os.environ.get("FINQA_JUDGE_MAX_ATTEMPTS", "3"))
 JUDGE_RETRY_BASE_SECONDS = float(os.environ.get("FINQA_JUDGE_RETRY_BASE_SECONDS", "1"))
 if JUDGE_API_STYLE not in {"responses", "chat_completions"}:
     raise ValueError("FINQA_JUDGE_API_STYLE must be responses or chat_completions")
+if not 1 <= JUDGE_SINGLE_MAX_OUTPUT_TOKENS <= 5000:
+    raise ValueError("FINQA_JUDGE_SINGLE_MAX_OUTPUT_TOKENS must be between 1 and 5000")
 if not 1 <= JUDGE_MAX_ATTEMPTS <= 5:
     raise ValueError("FINQA_JUDGE_MAX_ATTEMPTS must be between 1 and 5")
 if not 0 <= JUDGE_RETRY_BASE_SECONDS <= 30:
@@ -196,7 +199,7 @@ def _call_judge(system_prompt: str, user_prompt: str, *, multi_table: bool) -> t
         "model": MULTI_TABLE_JUDGE_MODEL if multi_table else JUDGE_MODEL,
         "instructions": system_prompt,
         "input": user_prompt,
-        "max_output_tokens": 5000 if multi_table else 512,
+        "max_output_tokens": 5000 if multi_table else JUDGE_SINGLE_MAX_OUTPUT_TOKENS,
     }
 
     if multi_table:

@@ -37,6 +37,7 @@ def test_agent_tools_and_evaluator_behavior_code_matches_upstream():
                 "JUDGE_BASE_URL",
                 "JUDGE_API_STYLE",
                 "JUDGE_REASONING_EFFORT",
+                "JUDGE_SINGLE_MAX_OUTPUT_TOKENS",
                 "JUDGE_MAX_ATTEMPTS",
                 "JUDGE_RETRY_BASE_SECONDS",
             }
@@ -52,7 +53,10 @@ def test_agent_tools_and_evaluator_behavior_code_matches_upstream():
                         or (isinstance(node, ast.ClassDef) and node.name.startswith("Judge"))
                         or (
                             isinstance(node, ast.If)
-                            and any(isinstance(part, ast.Name) and part.id in {"JUDGE_API_STYLE", "JUDGE_MAX_ATTEMPTS", "JUDGE_RETRY_BASE_SECONDS"} for part in ast.walk(node.test))
+                            and any(
+                                isinstance(part, ast.Name) and part.id in {"JUDGE_API_STYLE", "JUDGE_SINGLE_MAX_OUTPUT_TOKENS", "JUDGE_MAX_ATTEMPTS", "JUDGE_RETRY_BASE_SECONDS"}
+                                for part in ast.walk(node.test)
+                            )
                         )
                     )
                 ]

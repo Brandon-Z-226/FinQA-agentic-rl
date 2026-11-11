@@ -280,7 +280,19 @@ def patch_openai_chat(module):
         usage = getattr(response, "usage", None)
         if hasattr(usage, "model_dump"):
             usage = usage.model_dump()
-        emit("judge_sdk_response", seconds=time.time() - start, model=getattr(response, "model", None), usage=usage)
+        choices = getattr(response, "choices", None) or []
+        choice = choices[0] if choices else None
+        message = getattr(choice, "message", None)
+        content = getattr(message, "content", None)
+        emit(
+            "judge_sdk_response",
+            seconds=time.time() - start,
+            model=getattr(response, "model", None),
+            usage=usage,
+            finish_reason=getattr(choice, "finish_reason", None),
+            content_present=bool(content),
+            content_length=len(content) if isinstance(content, str) else 0,
+        )
         return response
 
     cls.create = create

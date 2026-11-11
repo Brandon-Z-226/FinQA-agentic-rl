@@ -74,6 +74,31 @@ def test_unsupported_api_style_fails_before_requests(judge_env):
         importlib.reload(evaluator)
 
 
+@pytest.mark.parametrize("value", ["0", "5001"])
+def test_single_table_output_budget_is_bounded(judge_env, value):
+    judge_env.setenv("FINQA_JUDGE_SINGLE_MAX_OUTPUT_TOKENS", value)
+    with pytest.raises(ValueError, match="FINQA_JUDGE_SINGLE_MAX_OUTPUT_TOKENS"):
+        importlib.reload(evaluator)
+
+
+def test_single_table_output_budget_override_reaches_reasoning_provider(judge_env):
+    judge_env.setenv("FINQA_JUDGE_API_STYLE", "chat_completions")
+    judge_env.setenv("FINQA_JUDGE_REASONING_EFFORT", "low")
+    judge_env.setenv("FINQA_JUDGE_SINGLE_MAX_OUTPUT_TOKENS", "2048")
+    importlib.reload(evaluator)
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="true"))])
+
+    endpoint = SimpleNamespace(create=create)
+    judge_env.setattr(evaluator, "_JUDGE_CLIENT", SimpleNamespace(chat=SimpleNamespace(completions=endpoint)))
+    assert evaluator._call_judge("system", "input", multi_table=False) == (True, {})
+    assert calls[0]["max_completion_tokens"] == 2048
+    assert "max_tokens" not in calls[0]
+
+
 @pytest.mark.parametrize("fence", ["```json", "```JSON", "```"])
 def test_chat_multi_table_accepts_complete_json_fence(monkeypatch, fence):
     rubric = {**dict.fromkeys(evaluator.CORRECTNESS_WEIGHTS, 100), "explanation": "Correct."}
